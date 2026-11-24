@@ -69,10 +69,11 @@ struct InputBar: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
+            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(focused ? 0.16 : 0.08), lineWidth: 1)
+                    .strokeBorder(Color.primary.opacity(focused ? 0.18 : 0.10), lineWidth: 1)
             )
             .padding(.horizontal, 12)
             .padding(.top, 8)

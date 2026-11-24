@@ -35,6 +35,12 @@ struct AppShellView: View {
                             .onTapGesture { withAnimation(.easeInOut(duration: 0.24)) { drawerOpen = false } }
                             .zIndex(1)
                     }
+
+                    if drawerOpen {
+                        DrawerView(isOpen: $drawerOpen)
+                            .transition(.move(edge: .leading))
+                            .zIndex(2)
+                    }
                 }
                 .frame(maxHeight: .infinity)
 
@@ -61,6 +67,8 @@ struct AppShellView: View {
             .onAppear { store.start() }
             .onDisappear { store.stop() }
         }
+        .background(.ultraThinMaterial)
+        .ignoresSafeArea()
     }
 
     // MARK: - 顶栏：菜单 / 标题 / 队列 + 新对话
