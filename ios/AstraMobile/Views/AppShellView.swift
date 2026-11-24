@@ -1,69 +1,102 @@
 import SwiftUI
 
-/// 应用主壳：全屏原生消息流 + 悬浮顶栏（仅菜单/状态）+ 悬浮输入卡（工具钮已收入卡内）
-/// + 左抽屉。内容从顶栏与输入条底下滚过（DeepSeek 式 scroll-under）。
+/// 应用主壳：环境光背景 + 全屏消息流 + 悬浮玻璃顶栏/输入卡 + 玻璃抽屉（推挤）。
+/// 内容从顶栏与输入条底下滚过（scroll-under）。
 struct AppShellView: View {
     @EnvironmentObject var store: ShellStore
     @EnvironmentObject var appState: AppState
 
     @State private var drawerOpen = false
 
-    var body: some View {
-        ZStack(alignment: .leading) {
-            ChatView()
-                .safeAreaInset(edge: .top, spacing: 0) { topBar }
-                .safeAreaInset(edge: .bottom, spacing: 0) { InputBar() }
+    private let drawerWidth: CGFloat = 292
+    private let pushFraction: CGFloat = 0.88
 
-            if drawerOpen {
-                DrawerView(isOpen: $drawerOpen)
-                    .transition(.move(edge: .leading))
-                    .zIndex(2)
+    var body: some View {
+        ZStack {
+            AmbientBackground()
+
+            ZStack(alignment: .leading) {
+                mainContent
+                    .offset(x: drawerOpen ? drawerWidth * pushFraction : 0)
+                    .animation(.spring(response: 0.32, dampingFraction: 0.86), value: drawerOpen)
+                    .scaleEffect(drawerOpen ? 0.985 : 1)
+                    .animation(.spring(response: 0.32, dampingFraction: 0.86), value: drawerOpen)
+
+                if drawerOpen {
+                    // 主内容上的暗化层（点按收抽屉）
+                    Color.black.opacity(0.28)
+                        .ignoresSafeArea()
+                        .onTapGesture { closeDrawer() }
+                        .transition(.opacity)
+                        .zIndex(1)
+
+                    DrawerView(isOpen: $drawerOpen, width: drawerWidth)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                        .zIndex(2)
+                }
             }
         }
         .sheet(isPresented: $store.showQueue) { QueueSheet() }
         .sheet(isPresented: $store.showConfig) { ConfigSheet() }
         .overlay(alignment: .top) {
             if let msg = store.toast {
-                Text(msg)
-                    .font(.footnote)
+                Label(msg, systemImage: "info.circle")
+                    .font(.system(.footnote, design: .rounded))
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(.thinMaterial, in: Capsule())
+                    .padding(.vertical, 9)
+                    .glassCapsule()
                     .transition(.move(edge: .top).combined(with: .opacity))
-                    .padding(.top, 6)
+                    .padding(.top, 8)
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: store.toast)
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: store.toast)
         .onAppear { store.start() }
         .onDisappear { store.stop() }
     }
 
-    // MARK: - 悬浮顶栏：菜单 + 连接状态（队列/新对话/配置已移入输入卡）
+    private func closeDrawer() {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { drawerOpen = false }
+    }
+
+    private var mainContent: some View {
+        ChatView()
+            .safeAreaInset(edge: .top, spacing: 0) { topBar }
+            .safeAreaInset(edge: .bottom, spacing: 0) { InputBar() }
+    }
+
+    // MARK: - 悬浮玻璃顶栏：玻璃圆钮菜单 + 状态胶囊
 
     private var topBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Button {
-                withAnimation(.easeInOut(duration: 0.22)) { drawerOpen = true }
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { drawerOpen = true }
             } label: {
                 Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 17, weight: .medium))
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.primary.opacity(0.8))
+                    .frame(width: 34, height: 34)
             }
             .glassToolbarButton()
 
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Circle()
                     .fill(connColor)
                     .frame(width: 7, height: 7)
+                    .shadow(color: connColor.opacity(0.6), radius: 3)
                 Text(connText)
-                    .font(.caption2)
+                    .font(.system(.caption2, design: .rounded))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 7)
+            .glassCapsule()
 
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
     }
 
     private var connColor: Color {
@@ -78,17 +111,17 @@ struct AppShellView: View {
         switch store.connState {
         case .connected: return store.isScoped ? "已连接 · 绑定会话" : "已连接 · \(store.sessions.count) 个会话"
         case .connecting: return "连接中…"
-        case .disconnected: return "未连接，重试中…"
+        case .disconnected: return "未连接，重试中"
         }
     }
 }
 
-// MARK: - 左抽屉：搜索 + 历史会话 + 底部用户入口
+// MARK: - 左抽屉：悬浮玻璃面板（搜索 + 历史会话 + 用户入口）
 
 struct DrawerView: View {
     @EnvironmentObject var store: ShellStore
-    @EnvironmentObject var appState: AppState
     @Binding var isOpen: Bool
+    let width: CGFloat
 
     @State private var query = ""
     @State private var showUser = false
@@ -102,57 +135,76 @@ struct DrawerView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            VStack(spacing: 0) {
-                searchField
-                    .padding(.horizontal, 14)
-                    .padding(.top, 12)
-
-                if filtered.isEmpty {
-                    VStack(spacing: 8) {
-                        Spacer()
-                        Text(store.sessions.isEmpty ? "暂无历史会话" : "没有匹配的会话")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                    }
-                    .frame(maxHeight: .infinity)
-                } else {
-                    List(filtered) { session in
-                        sessionRow(session)
-                            .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
-                    }
-                    .listStyle(.plain)
-                }
-
-                Divider()
-                Button {
-                    showUser = true
-                } label: {
-                    Label("用户", systemImage: "person.circle")
-                        .font(.body)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 12)
-                }
+        VStack(spacing: 0) {
+            searchField
                 .padding(.horizontal, 14)
-                .padding(.bottom, 4)
-            }
-            .frame(width: 300)
-            .frame(maxHeight: .infinity)
-            .background(Color(.systemBackground))
+                .padding(.top, 16)
 
-            Color.black.opacity(0.35)
+            Text("历史会话")
+                .font(.system(.caption2, design: .rounded).weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, 4)
+
+            if filtered.isEmpty {
+                VStack(spacing: 8) {
+                    Spacer()
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 28))
+                        .foregroundStyle(.quaternary)
+                    Text(store.sessions.isEmpty ? "暂无历史会话" : "没有匹配的会话")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .frame(maxHeight: .infinity)
+            } else {
+                List(filtered) { session in
+                    sessionRow(session)
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: 5, leading: 12, bottom: 5, trailing: 12))
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+            }
+
+            Divider().opacity(0.5)
+            Button {
+                showUser = true
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "person.circle")
+                        .font(.system(size: 18))
+                        .foregroundStyle(Color.accentColor)
+                    Text("用户")
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
                 .contentShape(Rectangle())
-                .onTapGesture { close() }
-                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
+            .padding(.bottom, 6)
         }
+        .frame(width: width)
+        .frame(maxHeight: .infinity)
+        .glassCard(cornerRadius: 26, shadow: true)
+        .padding(.leading, 10)
+        .padding(.vertical, 10)
         .sheet(isPresented: $showUser) { UserSheet() }
         .onAppear { store.refreshSessions() }
     }
 
     private var searchField: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 7) {
             Image(systemName: "magnifyingglass")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -164,45 +216,60 @@ struct DrawerView: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.tertiary)
                 }
             }
         }
-        .padding(10)
-        .background(Color(.systemGray6))
-        .cornerRadius(10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .glassCapsule()
     }
 
     private func sessionRow(_ session: SessionMeta) -> some View {
-        Button {
+        let isCurrent = session.id == currentSessionIdForMark
+        return Button {
             store.openSession(.session(session.id))
             close()
         } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(session.title)
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                HStack(spacing: 6) {
-                    if let project = session.projectName, !project.isEmpty {
-                        Text(project)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let date = session.updatedAtDate {
-                        Text(date.formatted(date: .abbreviated, time: .shortened))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if store.isRunningCurrent && session.id == currentSessionIdForMark {
-                        Text("执行中")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isCurrent ? AnyShapeStyle(GlassTokens.brandGradient) : AnyShapeStyle(Color(.systemGray4).opacity(0.5)))
+                    .frame(width: 34, height: 34)
+                    .overlay(
+                        Image(systemName: isCurrent ? "bubble.left.fill" : "bubble.left")
+                            .font(.system(size: 13))
+                            .foregroundStyle(isCurrent ? .white : .secondary)
+                    )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(session.title)
+                        .font(.callout.weight(isCurrent ? .semibold : .regular))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    HStack(spacing: 5) {
+                        if let date = session.updatedAtDate {
+                            Text(date, style: .relative)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        if store.isRunningCurrent && isCurrent {
+                            PulseDots().scaleEffect(0.7)
+                            Text("执行中")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
                     }
                 }
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                isCurrent ? Color.accentColor.opacity(0.10) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
     }
 
     private var currentSessionIdForMark: String? {
@@ -211,6 +278,6 @@ struct DrawerView: View {
     }
 
     private func close() {
-        withAnimation(.easeInOut(duration: 0.22)) { isOpen = false }
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { isOpen = false }
     }
 }

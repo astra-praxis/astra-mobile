@@ -5,6 +5,21 @@ struct AstraMobileApp: App {
     @StateObject private var store = DesktopStore()
     @StateObject private var appState = AppState()
 
+    init() {
+        // 模拟器端到端测试钩子（仅 DEBUG）：launch 参数覆盖已绑定桌面的 Keychain 密钥，
+        // 须在首帧求值前执行，否则 DesktopRoot 会拿旧 secret 建 ShellStore。
+        // 用法：simctl launch <sim> <bundle> -mockBindSecret <secret>
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "-mockBindSecret"), i + 1 < args.count {
+            let secret = args[i + 1]
+            for d in store.desktops {
+                KeychainStore.save(secret: secret, account: d.id)
+            }
+        }
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()
