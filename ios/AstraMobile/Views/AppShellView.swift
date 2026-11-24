@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// 应用主壳：环境光背景 + 全屏消息流 + 悬浮玻璃顶栏/输入卡 + 左侧负一屏（推挤）。
+/// 应用主壳：环境光背景 + 全屏消息流 + 悬浮玻璃顶栏/输入卡 + 左侧负一屏。
 /// 内容从顶栏与输入条底下滚过（scroll-under）。
 /// 负一屏为进度驱动（0→1）：贴边全高、占屏宽 85%、与主界面同底色，
-/// 左缘右滑跟手拉出 / 顶栏搜索点按直达（自动聚焦搜索框），
-/// 暗化层左滑跟手收起，松手按甩动意图/过半判定落点，弹簧归位。
+/// 与主屏等速推移（同一根弹簧，像两页相邻的纸推来推去，无暗化遮罩）：
+/// 左缘右滑跟手拉出，露出的主屏右缘点按收起，松手按甩动意图/过半判定落点。
 struct AppShellView: View {
     @EnvironmentObject var store: ShellStore
     @EnvironmentObject var appState: AppState
@@ -13,10 +13,6 @@ struct AppShellView: View {
     @State private var drawerProgress: CGFloat = 0
     @State private var dragBase: CGFloat?
     @State private var dragHorizontal: Bool?
-    /// 顶栏搜索点开的那一次：负一屏滑出后自动聚焦搜索框
-    @State private var focusSearchOnOpen = false
-
-    private let pushFraction: CGFloat = 0.88
 
     var body: some View {
         GeometryReader { geo in
@@ -25,9 +21,9 @@ struct AppShellView: View {
                 AmbientBackground()
 
                 ZStack(alignment: .leading) {
+                    // 主屏与负一屏等速推移：开 = 整体右移一个屏宽的 85%，像两页纸推来推去
                     mainContent
-                        .offset(x: panelWidth * pushFraction * drawerProgress)
-                        .scaleEffect(1 - 0.015 * drawerProgress)
+                        .offset(x: panelWidth * drawerProgress)
 
                     // 左缘手势条：屏幕左缘右滑，负一屏跟手拉出
                     Color.clear
@@ -38,17 +34,15 @@ struct AppShellView: View {
                         .allowsHitTesting(drawerProgress < 0.05)
                         .zIndex(1)
 
-                    // 暗化层：透明度随进度渐显；点按收起，左滑跟手收起
-                    Color.black.opacity(0.28 * drawerProgress)
-                        .ignoresSafeArea()
+                    // 露出的主屏右缘：点按收起（负一屏盖住左侧，只有这条缝可点）
+                    Color.clear
                         .contentShape(Rectangle())
                         .onTapGesture { closeDrawer() }
-                        .gesture(edgeDrag(width: panelWidth))
                         .allowsHitTesting(drawerProgress > 0.05)
                         .zIndex(2)
 
                     if drawerProgress > 0 {
-                        DrawerView(isOpen: drawerIsOpen, width: panelWidth, focusSearch: $focusSearchOnOpen)
+                        DrawerView(isOpen: drawerIsOpen, width: panelWidth)
                             .simultaneousGesture(edgeDrag(width: panelWidth))   // 本体上左滑也能收（与 List 纵向滚动方向竞争）
                             .offset(x: (drawerProgress - 1) * panelWidth)
                             .zIndex(3)
@@ -172,26 +166,6 @@ struct AppShellView: View {
             }
             .glassToolbarButton()
 
-            // 搜索入口：点按直接展开负一屏并聚焦搜索框
-            Button {
-                focusSearchOnOpen = true
-                openDrawer()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.footnote)
-                    Text("搜索历史对话")
-                        .font(.system(.subheadline, design: .rounded))
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-                .foregroundStyle(.secondary)
-                .padding(.leading, 12)
-                .frame(height: 34)
-                .contentShape(Capsule())
-            }
-            .glassCapsuleButton()
-
             ttsButton
 
             Button {
@@ -205,6 +179,8 @@ struct AppShellView: View {
             .glassToolbarButton()
             .disabled(store.isScoped)
             .opacity(store.isScoped ? 0.4 : 1)
+
+            Spacer(minLength: 8)
 
             statusPill
         }
@@ -277,8 +253,6 @@ struct DrawerView: View {
     @EnvironmentObject var store: ShellStore
     @Binding var isOpen: Bool
     let width: CGFloat
-    /// 顶栏搜索点进来的那次打开：滑出后自动聚焦搜索框
-    @Binding var focusSearch: Bool
 
     @State private var query = ""
     @State private var showUser = false
@@ -367,20 +341,9 @@ struct DrawerView: View {
         .sheet(isPresented: $showUser) { UserSheet() }
         .onAppear {
             store.refreshSessions()
-            focusIfRequested()
         }
         .onChange(of: isOpen) { open in
-            if open { focusIfRequested() } else { searchFocused = false }
-        }
-    }
-
-    /// 顶栏搜索点进来的那次打开：等滑出动画过半再聚焦，弹键盘
-    private func focusIfRequested() {
-        guard focusSearch else { return }
-        focusSearch = false
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 380_000_000)
-            searchFocused = true
+            if !open { searchFocused = false }
         }
     }
 
@@ -406,7 +369,7 @@ struct DrawerView: View {
         }
         .padding(.horizontal, 13)
         .padding(.vertical, 11)
-        .background(Color.primary.opacity(0.06), in: Capsule())
+        .glassCapsuleButton()
     }
 
     private func sessionRow(_ session: SessionMeta) -> some View {
