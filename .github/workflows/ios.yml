@@ -36,7 +36,7 @@ jobs:
       - name: Locate app bundle
         id: app
         run: |
-          path=$(find build/DerivedData/Build/Products -name 'AstraMobile.app' -path '*iphonesimulator*' | head -1)
+          path=$(find ios/build/DerivedData/Build/Products -name 'AstraMobile.app' -path '*iphonesimulator*' | head -1)
           echo "path=$path" >> "$GITHUB_OUTPUT"
           test -n "$path"
 
