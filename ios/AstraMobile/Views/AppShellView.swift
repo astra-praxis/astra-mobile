@@ -13,62 +13,45 @@ struct AppShellView: View {
     @State private var webView: WKWebView?
 
     var body: some View {
-        GeometryReader { geo in
-            let push = drawerOpen ? geo.size.width * 0.82 : 0
-            VStack(spacing: 0) {
-                topBar
+        VStack(spacing: 0) {
+            topBar
 
-                ZStack(alignment: .leading) {
-                    if let url = store.entryURL() {
-                        BridgeWebView(url: url,
-                                      allowedHost: store.desktop.host,
-                                      allowedPort: store.desktop.port,
-                                      reloadToken: store.reloadToken,
-                                      activeWebView: $webView)
-                            .offset(x: push)
-                            .mask(RoundedRectangle(cornerRadius: drawerOpen ? 24 : 0, style: .continuous))
-                    }
-
-                    if drawerOpen {
-                        Color.black.opacity(0.18)
-                            .ignoresSafeArea()
-                            .onTapGesture { withAnimation(.easeInOut(duration: 0.24)) { drawerOpen = false } }
-                            .zIndex(1)
-                    }
-
-                    if drawerOpen {
-                        DrawerView(isOpen: $drawerOpen)
-                            .transition(.move(edge: .leading))
-                            .zIndex(2)
-                    }
+            ZStack(alignment: .leading) {
+                if let url = store.entryURL() {
+                    BridgeWebView(url: url,
+                                  allowedHost: store.desktop.host,
+                                  allowedPort: store.desktop.port,
+                                  reloadToken: store.reloadToken,
+                                  activeWebView: $webView)
                 }
-                .frame(maxHeight: .infinity)
 
-                InputBar(onQueue: { showQueue = true },
-                         onNew: { store.openSession(.new) },
-                         onConfig: { showConfig = true })
-            }
-            .sheet(isPresented: $showQueue) { QueueSheet() }
-            .sheet(isPresented: $showConfig) { ConfigSheet() }
-            .sheet(isPresented: $showUser) { UserSheet() }
-            .overlay(alignment: .top) {
-                if let msg = store.toast {
-                    Text(msg)
-                        .font(.footnote)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(.thinMaterial, in: Capsule())
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .padding(.top, 6)
+                if drawerOpen {
+                    DrawerView(isOpen: $drawerOpen)
+                        .transition(.move(edge: .leading))
+                        .zIndex(2)
                 }
             }
-            .animation(.easeInOut(duration: 0.2), value: store.toast)
-            .animation(.easeInOut(duration: 0.24), value: drawerOpen)
-            .onAppear { store.start() }
-            .onDisappear { store.stop() }
+            .frame(maxHeight: .infinity)
+
+            InputBar()
         }
-        .background(.ultraThinMaterial)
-        .ignoresSafeArea()
+        .sheet(isPresented: $showQueue) { QueueSheet() }
+        .sheet(isPresented: $showConfig) { ConfigSheet() }
+        .sheet(isPresented: $showUser) { UserSheet() }
+        .overlay(alignment: .top) {
+            if let msg = store.toast {
+                Text(msg)
+                    .font(.footnote)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.thinMaterial, in: Capsule())
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .padding(.top, 6)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: store.toast)
+        .onAppear { store.start() }
+        .onDisappear { store.stop() }
     }
 
     // MARK: - 顶栏：菜单 / 标题 / 队列 + 新对话
@@ -76,7 +59,7 @@ struct AppShellView: View {
     private var topBar: some View {
         HStack(spacing: 14) {
             Button {
-                withAnimation(.easeInOut(duration: 0.24)) { drawerOpen = true }
+                withAnimation(.easeInOut(duration: 0.22)) { drawerOpen = true }
             } label: {
                 Image(systemName: "line.3.horizontal")
                     .font(.system(size: 17, weight: .medium))
@@ -92,6 +75,43 @@ struct AppShellView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
+
+            Spacer(minLength: 8)
+
+            Button {
+                showQueue = true
+            } label: {
+                Image(systemName: "square.stack.3d.up")
+                    .font(.system(size: 16, weight: .medium))
+                    .overlay(alignment: .topTrailing) {
+                        if !store.queue.isEmpty {
+                            Text("\(store.queue.count)")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(4)
+                                .background(Color.red, in: Circle())
+                                .offset(x: 7, y: -7)
+                        }
+                    }
+            }
+            .glassToolbarButton()
+
+            Button {
+                store.openSession(.new)
+            } label: {
+                Image(systemName: "plus.bubble")
+                    .font(.system(size: 16, weight: .medium))
+            }
+            .glassToolbarButton()
+            .disabled(store.isScoped)
+
+            Button {
+                showConfig = true
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 16, weight: .medium))
+            }
+            .glassToolbarButton()
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -137,7 +157,21 @@ struct DrawerView: View {
             VStack(spacing: 0) {
                 searchField
                     .padding(.horizontal, 14)
-                    .padding(.top, 14)
+                    .padding(.top, 12)
+
+                Button {
+                    store.openSession(.new)
+                    isOpen = false
+                } label: {
+                    Label("新对话", systemImage: "plus.bubble")
+                        .font(.body.weight(.semibold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 10)
+                }
+                .glassProminentButton()
+                .disabled(store.isScoped)
+                .padding(.horizontal, 14)
+                .padding(.top, 8)
 
                 if filtered.isEmpty {
                     VStack(spacing: 8) {
@@ -155,7 +189,6 @@ struct DrawerView: View {
                             .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
                     }
                     .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
                 }
 
                 Divider()
@@ -172,15 +205,9 @@ struct DrawerView: View {
             }
             .frame(width: 300)
             .frame(maxHeight: .infinity)
-            .background(.ultraThinMaterial)
-            .background(
-                LinearGradient(colors: [Color.accentColor.opacity(0.10), .clear],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-            )
-            .mask(RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .padding(.vertical, 8)
+            .background(Color(.systemBackground))
 
-            Color.clear
+            Color.black.opacity(0.35)
                 .contentShape(Rectangle())
                 .onTapGesture { close() }
                 .frame(maxWidth: .infinity)
