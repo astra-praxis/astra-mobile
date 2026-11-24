@@ -147,7 +147,13 @@ final class ShellStore: ObservableObject {
         case .follow, .new: command["session_id"] = NSNull()
         }
         if case .new = openTarget { lastNewSendText = body }
-        sendCommand(command)
+        sendCommand(command) { [weak self] ok in
+            // 本地回显：不等 PC 广播，发送成功立即上屏（pending 态，广播到达后去重确认）
+            guard let self, ok else { return }
+            let sid: String?
+            if case .session(let id) = self.openTarget { sid = id } else { sid = nil }
+            self.messages.echoOutgoing(body, sender: self.senderName, targetSessionId: sid)
+        }
         return true
     }
 
@@ -243,14 +249,16 @@ final class ShellStore: ObservableObject {
         }
     }
 
-    private func sendCommand(_ command: [String: Any]) {
+    private func sendCommand(_ command: [String: Any], onSent: ((Bool) -> Void)? = nil) {
         guard isConnected, let ws else {
             showToast("未连接到 PC，请稍候重试")
+            onSent?(false)
             return
         }
         ws.send(json: command) { [weak self] ok in
             DispatchQueue.main.async {
                 if !ok { self?.showToast("发送失败，请稍候重试") }
+                onSent?(ok)
             }
         }
     }
@@ -284,6 +292,18 @@ final class ShellStore: ObservableObject {
                     messages.openSession(sid)
                 }
             }
+            // 模拟器端到端测试钩子（仅 DEBUG）：连接后自动发送一条消息，
+            // 验证本地回显与 PC 广播去重
+            #if DEBUG
+            let args = ProcessInfo.processInfo.arguments
+            if let i = args.firstIndex(of: "-mockAutoSend"), i + 1 < args.count {
+                let text = args[i + 1]
+                Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 800_000_000)
+                    self?.send(text)
+                }
+            }
+            #endif
         case .view(let sid):
             // 与页面同一规则：仅停在默认态（follow）时收养 PC 切换的会话；
             // 用户已显式选择（指定会话/新对话）时不拽走视图

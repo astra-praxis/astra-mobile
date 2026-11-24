@@ -179,6 +179,25 @@ final class MessageStore: ObservableObject {
 
     // MARK: - 本地动作回显
 
+    /// 发送成功后的本地回显：立即上屏并标 pending，PC 广播 user_message 时确认去重。
+    /// targetSessionId 传 nil（follow/新对话）时上屏到当前视图；指定会话且非当前视图时只维护缓存
+    func echoOutgoing(_ text: String, sender: String, targetSessionId: String?) {
+        var e = ChatEntry(id: UUID(), kind: "user")
+        e.text = text
+        e.sender = sender
+        e.pending = true
+        if targetSessionId == nil || targetSessionId == currentSessionId {
+            working.append(e)
+            publishNow()
+            if let sid = currentSessionId { loadedEntries[sid] = working }
+            return
+        }
+        if var cached = loadedEntries[targetSessionId!] {
+            cached.append(e)
+            loadedEntries[targetSessionId!] = cached
+        }
+    }
+
     func markQuestionAnswered(questionId: String, answer: String?, declined: Bool) {
         ChatEnvelope.markAnswered(questionId: questionId, answer: answer, declined: declined, in: &working)
         publishNow()

@@ -257,6 +257,13 @@ private struct EntryRow: View {
                         in: RoundedRectangle(cornerRadius: 17, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 17, style: .continuous)
                 .stroke(Color.accentColor.opacity(0.14), lineWidth: 0.5))
+            if entry.pending {
+                // 本地回显未确认：PC 忙时消息入队/丢弃，广播 user_message 到达前显示状态
+                Label("已发送，等待桌面端处理", systemImage: "clock.arrow.circlepath")
+                    .font(.system(.caption2, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 4)
+            }
         }
     }
 
