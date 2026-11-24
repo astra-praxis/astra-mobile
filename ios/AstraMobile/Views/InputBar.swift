@@ -35,9 +35,10 @@ struct InputBar: View {
             }
 
             TextField("发送消息到 PC…", text: $text, axis: .vertical)
-                .lineLimit(1...6)
+                .lineLimit(1...8)
                 .padding(.horizontal, 10)
                 .padding(.top, 8)
+                .frame(minHeight: 58, alignment: .topLeading)   // 空态也有两三行高度，文本顶对齐
                 .focused($focused)
                 .onSubmit(send)
 
