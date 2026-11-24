@@ -40,7 +40,7 @@ final class ShellStore: ObservableObject {
     let messages: MessageStore
 
     let desktop: BoundDesktop
-    private let secret: String
+    private var secret: String
     private var ws: BridgeWebSocket?
     private var msgSeq = 0
     private var backoff: TimeInterval = 1
@@ -104,6 +104,17 @@ final class ShellStore: ObservableObject {
         reconnectTask = nil
         ws?.close()
         ws = nil
+    }
+
+    /// 重新扫码/换 key 后热更新凭证：断开旧连接、清退避，用新 secret 重连。
+    /// 桌面项 id 不变（host:port），DesktopRoot 不会重建，secret 只能在这里换。
+    func rebind(secret newSecret: String) {
+        guard newSecret != secret else { return }
+        stop()
+        secret = newSecret
+        messages.updateSecret(newSecret)
+        backoff = 1
+        connect()
     }
 
     // MARK: - 动作

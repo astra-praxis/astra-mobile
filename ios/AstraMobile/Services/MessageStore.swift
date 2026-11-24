@@ -13,7 +13,7 @@ final class MessageStore: ObservableObject {
     @Published private(set) var currentSessionId: String?   // nil = 新对话/未定
 
     private let baseURL: String
-    private let secret: String
+    private var secret: String
 
     /// 各会话已加载条目（切会话时免重复拉取；「正在执行」的另一会话也在维护）
     private var loadedEntries: [String: [ChatEntry]] = [:]
@@ -29,6 +29,11 @@ final class MessageStore: ObservableObject {
     init(baseURL: String, secret: String) {
         self.baseURL = baseURL
         self.secret = secret
+    }
+
+    /// 重新绑定（换 key）后同步新凭证，历史拉取继续可用
+    func updateSecret(_ newSecret: String) {
+        secret = newSecret
     }
 
     // MARK: - 打开会话

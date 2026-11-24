@@ -51,6 +51,13 @@ struct DesktopRoot: View {
             .environmentObject(shell)
             .environmentObject(shell.messages)
             .id(desktop.id)
+            // 同桌面重扫（换 key）只变 updatedAt 不变 id，StateObject 不会重建；
+            // 在这里热更新凭证并重连，避免拿旧 secret 撞 401
+            .onChange(of: desktop.updatedAt) { _ in
+                if let secret = KeychainStore.load(account: desktop.id) {
+                    shell.rebind(secret: secret)
+                }
+            }
     }
 }
 
