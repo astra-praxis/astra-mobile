@@ -19,6 +19,16 @@ extension String {
     var fullRange: NSRange { NSRange(location: 0, length: (self as NSString).length) }
 }
 
+extension NSTextCheckingResult {
+    /// 捕获组安全取值：越界或未命中返回 nil。
+    /// 直接调 range(at:) 越界会抛 NSInvalidArgumentException，Swift 捕获不到 → SIGABRT 闪退。
+    func groupRange(_ index: Int) -> NSRange? {
+        guard index >= 0, index < numberOfRanges else { return nil }
+        let r = range(at: index)
+        return r.location == NSNotFound ? nil : r
+    }
+}
+
 enum MarkdownParser {
 
     /// 解析全文为块数组。围栏未闭合时余下内容按代码体展示（与手机页一致）
@@ -89,36 +99,40 @@ enum MarkdownParser {
             mode = ""
         }
 
+        func capture(_ i: Int, _ m: NSTextCheckingResult, in s: String) -> String? {
+            guard let r = m.groupRange(i), let idx = Range(r, in: s) else { return nil }
+            return String(s[idx])
+        }
+
         for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
             let l = String(line)
 
             if let hm = headRE.firstMatch(in: l, range: l.fullRange),
-               let textRange = Range(hm.range(at: 2), in: l) {
+               let hashes = hm.groupRange(1), let textRange = hm.groupRange(2),
+               let r1 = Range(hashes, in: l), let r2 = Range(textRange, in: l) {
                 flush()
-                let level = Range(hm.range(at: 1), in: l).map { l[$0].count } ?? 1
-                blocks.append(.heading(level: min(level, 3), text: String(l[textRange])))
+                blocks.append(.heading(level: min(l[r1].count, 3), text: String(l[r2])))
                 continue
             }
             if hrRE.firstMatch(in: l, range: l.fullRange) != nil {
                 flush(); blocks.append(.hr); continue
             }
-            if ulRE.firstMatch(in: l, range: l.fullRange) != nil {
+            if let m = ulRE.firstMatch(in: l, range: l.fullRange),
+               let item = capture(1, m, in: l) {
                 if mode != "ul" { flush(); mode = "ul" }
-                let m = ulRE.firstMatch(in: l, range: l.fullRange)!
-                bullets.append(String(l[Range(m.range(at: 1), in: l)!]))
+                bullets.append(item)
                 continue
             }
-            if olRE.firstMatch(in: l, range: l.fullRange) != nil {
+            if let m = olRE.firstMatch(in: l, range: l.fullRange),
+               let marker = capture(1, m, in: l), let text = capture(2, m, in: l) {
                 if mode != "ol" { flush(); mode = "ol" }
-                let m = olRE.firstMatch(in: l, range: l.fullRange)!
-                let marker = String(l[Range(m.range(at: 1), in: l)!])
-                ordered.append((marker, String(l[Range(m.range(at: 2), in: l)!])))
+                ordered.append((marker, text))
                 continue
             }
-            if qmRE.firstMatch(in: l, range: l.fullRange) != nil {
+            if let m = qmRE.firstMatch(in: l, range: l.fullRange),
+               let line = capture(1, m, in: l) {
                 if mode != "quote" { flush(); mode = "quote" }
-                let m = qmRE.firstMatch(in: l, range: l.fullRange)!
-                quote.append(String(l[Range(m.range(at: 1), in: l)!]))
+                quote.append(line)
                 continue
             }
             flush()
@@ -131,7 +145,8 @@ enum MarkdownParser {
     // 与手机页同款的行内定界正则：`code` / **b** / __b__ / *i* / _i_
     static let inlineRE = try! NSRegularExpression(
         pattern: "(`+)([^`]*?)\\1|\\*\\*([^*]+?)\\*\\*|__([^_]+?)__|\\*([^*\\n]+?)\\*|_([^_\\n]+?)_")
-    private static let headRE = try! NSRegularExpression(pattern: "^#{1,6}\\s+(.+)$")
+    // 组 1 = 井号数量（层级），组 2 = 标题正文；两个分组缺一不可，读取组号越界会抛异常闪退
+    private static let headRE = try! NSRegularExpression(pattern: "^(#{1,6})\\s+(.+)$")
     private static let hrRE = try! NSRegularExpression(pattern: "^\\s*(-{3,}|\\*{3,}|_{3,})\\s*$")
     private static let ulRE = try! NSRegularExpression(pattern: "^\\s*[-*+]\\s+(.+)$")
     private static let olRE = try! NSRegularExpression(pattern: "^\\s*(\\d+)[.)]\\s+(.+)$")
@@ -155,10 +170,11 @@ enum MarkdownInline {
                 out.append(plain(ns.substring(with: NSRange(location: last, length: m.range.location - last))))
             }
             let capture: (Int) -> String = { i in
-                Range(m.range(at: i), in: text).map { String(text[$0]) } ?? ""
+                guard let r = m.groupRange(i), let idx = Range(r, in: text) else { return "" }
+                return String(text[idx])
             }
             // 组 2 = 行内代码（可为空）；组 3/4 = 粗体；组 5/6 = 斜体
-            if m.range(at: 2).location != NSNotFound {
+            if m.groupRange(2) != nil {
                 var code = AttributedString(capture(2))
                 code.font = .system(.callout, design: .monospaced)
                 code.backgroundColor = .init(.secondarySystemBackground)
@@ -184,8 +200,8 @@ enum MarkdownInline {
     }
 
     private static func firstNonNotFound(_ m: NSTextCheckingResult, groups: Int...) -> NSRange? {
-        for g in groups where m.range(at: g).location != NSNotFound {
-            return m.range(at: g)
+        for g in groups {
+            if let r = m.groupRange(g) { return r }
         }
         return nil
     }
