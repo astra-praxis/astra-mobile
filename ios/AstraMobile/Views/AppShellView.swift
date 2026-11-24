@@ -41,12 +41,13 @@ struct AppShellView: View {
                         .allowsHitTesting(drawerProgress > 0.05)
                         .zIndex(2)
 
-                    if drawerProgress > 0 {
-                        DrawerView(isOpen: drawerIsOpen, width: panelWidth)
-                            .simultaneousGesture(edgeDrag(width: panelWidth))   // 本体上左滑也能收（与 List 纵向滚动方向竞争）
-                            .offset(x: (drawerProgress - 1) * panelWidth)
-                            .zIndex(3)
-                    }
+                    // 负一屏常驻树：不随开合增删，保持 List 滚动位置与状态；
+                    // 关闭时整体滑出屏外，点按命中随进度门控
+                    DrawerView(isOpen: drawerIsOpen, width: panelWidth, progress: drawerProgress)
+                        .simultaneousGesture(edgeDrag(width: panelWidth))   // 本体上左滑也能收（与 List 纵向滚动方向竞争）
+                        .offset(x: (drawerProgress - 1) * panelWidth)
+                        .allowsHitTesting(drawerProgress > 0.02)
+                        .zIndex(3)
                 }
             }
         }
@@ -253,10 +254,17 @@ struct DrawerView: View {
     @EnvironmentObject var store: ShellStore
     @Binding var isOpen: Bool
     let width: CGFloat
+    /// 负一屏进度（0→1）：发丝线/阴影随进度淡入淡出，关闭时不泄入主屏
+    let progress: CGFloat
 
     @State private var query = ""
     @State private var showUser = false
+    @State private var searchMode = false   // 搜索页：搜索框聚焦进入，返回按钮退出
     @FocusState private var searchFocused: Bool
+
+    private var trimmedQuery: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     private var filtered: [SessionMeta] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -268,10 +276,65 @@ struct DrawerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            searchField
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
+            // 顶部：常规态只有搜索框；搜索态是返回按钮 + 搜索框
+            HStack(spacing: 10) {
+                if searchMode {
+                    Button {
+                        exitSearch()
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 30, height: 34)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                searchField
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .animation(.spring(response: 0.28, dampingFraction: 0.86), value: searchMode)
 
+            if searchMode {
+                searchPage
+            } else {
+                historyPage
+            }
+        }
+        .frame(width: width)
+        .frame(maxHeight: .infinity)
+        .background {
+            // 同一张环境光壁纸：负一屏与主界面共底色，像同一张屏的左右两页
+            AmbientBackground()
+        }
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.10))
+                .frame(width: 0.5)
+                .opacity(Double(progress))   // 关闭时发丝线贴屏左缘，随进度淡出避免常驻
+        }
+        .shadow(color: .black.opacity(0.16 * Double(progress)), radius: 22, x: 8)   // 同理：关闭时阴影不泄入主屏
+        .sheet(isPresented: $showUser) { UserSheet() }
+        .onAppear {
+            store.refreshSessions()
+        }
+        .onChange(of: isOpen) { open in
+            if !open {
+                searchFocused = false
+                query = ""
+                searchMode = false
+            }
+        }
+        .onChange(of: searchFocused) { focused in
+            guard focused, !searchMode else { return }
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) { searchMode = true }
+        }
+    }
+
+    /// 常规页：历史会话列表 + 用户入口
+    private var historyPage: some View {
+        VStack(spacing: 0) {
             Text("历史会话")
                 .font(.system(.caption2, design: .rounded).weight(.semibold))
                 .foregroundStyle(.tertiary)
@@ -281,26 +344,10 @@ struct DrawerView: View {
                 .padding(.bottom, 4)
 
             if filtered.isEmpty {
-                VStack(spacing: 8) {
-                    Spacer()
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 28))
-                        .foregroundStyle(.quaternary)
-                    Text(store.sessions.isEmpty ? "暂无历史会话" : "没有匹配的会话")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .frame(maxHeight: .infinity)
+                emptyState(icon: "clock.arrow.circlepath",
+                           text: store.sessions.isEmpty ? "暂无历史会话" : "没有匹配的会话")
             } else {
-                List(filtered) { session in
-                    sessionRow(session)
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                        .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
-                }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
+                sessionList(filtered)
             }
 
             Divider().opacity(0.5)
@@ -326,24 +373,20 @@ struct DrawerView: View {
             .buttonStyle(.plain)
             .padding(.bottom, 6)
         }
-        .frame(width: width)
-        .frame(maxHeight: .infinity)
-        .background {
-            // 同一张环境光壁纸：负一屏与主界面共底色，像同一张屏的左右两页
-            AmbientBackground()
-        }
-        .overlay(alignment: .trailing) {
-            Rectangle()
-                .fill(Color.primary.opacity(0.10))
-                .frame(width: 0.5)
-        }
-        .shadow(color: .black.opacity(0.16), radius: 22, x: 8)
-        .sheet(isPresented: $showUser) { UserSheet() }
-        .onAppear {
-            store.refreshSessions()
-        }
-        .onChange(of: isOpen) { open in
-            if !open { searchFocused = false }
+    }
+
+    /// 搜索页：聚焦即进入；空关键词显示引导，有关键词才搜历史记录
+    @ViewBuilder
+    private var searchPage: some View {
+        if trimmedQuery.isEmpty {
+            emptyState(icon: "text.magnifyingglass",
+                       text: "搜索对话记录",
+                       hint: "输入关键词查找会话标题与项目")
+        } else if filtered.isEmpty {
+            emptyState(icon: "questionmark.text.magnifyingglass",
+                       text: "没有匹配的会话")
+        } else {
+            sessionList(filtered)
         }
     }
 
@@ -370,6 +413,42 @@ struct DrawerView: View {
         .padding(.horizontal, 13)
         .padding(.vertical, 11)
         .glassCapsuleButton()
+    }
+
+    private func sessionList(_ sessions: [SessionMeta]) -> some View {
+        List(sessions) { session in
+            sessionRow(session)
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+    }
+
+    private func emptyState(icon: String, text: String, hint: String? = nil) -> some View {
+        VStack(spacing: 10) {
+            Spacer()
+            Image(systemName: icon)
+                .font(.system(size: 28))
+                .foregroundStyle(.quaternary)
+            Text(text)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            if let hint {
+                Text(hint)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func exitSearch() {
+        searchFocused = false
+        query = ""
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) { searchMode = false }
     }
 
     private func sessionRow(_ session: SessionMeta) -> some View {
