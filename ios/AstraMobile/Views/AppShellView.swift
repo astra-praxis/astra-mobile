@@ -1,43 +1,27 @@
 import SwiftUI
-import WebKit
 
-/// 应用主壳：原生顶栏 + 左抽屉 + WebView（消息流）+ 原生输入条
+/// 应用主壳：全屏原生消息流 + 悬浮顶栏（仅菜单/状态）+ 悬浮输入卡（工具钮已收入卡内）
+/// + 左抽屉。内容从顶栏与输入条底下滚过（DeepSeek 式 scroll-under）。
 struct AppShellView: View {
     @EnvironmentObject var store: ShellStore
     @EnvironmentObject var appState: AppState
 
     @State private var drawerOpen = false
-    @State private var showQueue = false
-    @State private var showConfig = false
-    @State private var showUser = false
-    @State private var webView: WKWebView?
 
     var body: some View {
-        VStack(spacing: 0) {
-            topBar
+        ZStack(alignment: .leading) {
+            ChatView()
+                .safeAreaInset(edge: .top, spacing: 0) { topBar }
+                .safeAreaInset(edge: .bottom, spacing: 0) { InputBar() }
 
-            ZStack(alignment: .leading) {
-                if let url = store.entryURL() {
-                    BridgeWebView(url: url,
-                                  allowedHost: store.desktop.host,
-                                  allowedPort: store.desktop.port,
-                                  reloadToken: store.reloadToken,
-                                  activeWebView: $webView)
-                }
-
-                if drawerOpen {
-                    DrawerView(isOpen: $drawerOpen)
-                        .transition(.move(edge: .leading))
-                        .zIndex(2)
-                }
+            if drawerOpen {
+                DrawerView(isOpen: $drawerOpen)
+                    .transition(.move(edge: .leading))
+                    .zIndex(2)
             }
-            .frame(maxHeight: .infinity)
-
-            InputBar()
         }
-        .sheet(isPresented: $showQueue) { QueueSheet() }
-        .sheet(isPresented: $showConfig) { ConfigSheet() }
-        .sheet(isPresented: $showUser) { UserSheet() }
+        .sheet(isPresented: $store.showQueue) { QueueSheet() }
+        .sheet(isPresented: $store.showConfig) { ConfigSheet() }
         .overlay(alignment: .top) {
             if let msg = store.toast {
                 Text(msg)
@@ -54,10 +38,10 @@ struct AppShellView: View {
         .onDisappear { store.stop() }
     }
 
-    // MARK: - 顶栏：菜单 / 标题 / 队列 + 新对话
+    // MARK: - 悬浮顶栏：菜单 + 连接状态（队列/新对话/配置已移入输入卡）
 
     private var topBar: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 8) {
             Button {
                 withAnimation(.easeInOut(duration: 0.22)) { drawerOpen = true }
             } label: {
@@ -76,45 +60,10 @@ struct AppShellView: View {
                     .lineLimit(1)
             }
 
-            Spacer(minLength: 8)
-
-            Button {
-                showQueue = true
-            } label: {
-                Image(systemName: "square.stack.3d.up")
-                    .font(.system(size: 16, weight: .medium))
-                    .overlay(alignment: .topTrailing) {
-                        if !store.queue.isEmpty {
-                            Text("\(store.queue.count)")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.white)
-                                .padding(4)
-                                .background(Color.red, in: Circle())
-                                .offset(x: 7, y: -7)
-                        }
-                    }
-            }
-            .glassToolbarButton()
-
-            Button {
-                store.openSession(.new)
-            } label: {
-                Image(systemName: "plus.bubble")
-                    .font(.system(size: 16, weight: .medium))
-            }
-            .glassToolbarButton()
-            .disabled(store.isScoped)
-
-            Button {
-                showConfig = true
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 16, weight: .medium))
-            }
-            .glassToolbarButton()
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
     }
 
     private var connColor: Color {
@@ -158,20 +107,6 @@ struct DrawerView: View {
                 searchField
                     .padding(.horizontal, 14)
                     .padding(.top, 12)
-
-                Button {
-                    store.openSession(.new)
-                    isOpen = false
-                } label: {
-                    Label("新对话", systemImage: "plus.bubble")
-                        .font(.body.weight(.semibold))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 10)
-                }
-                .glassProminentButton()
-                .disabled(store.isScoped)
-                .padding(.horizontal, 14)
-                .padding(.top, 8)
 
                 if filtered.isEmpty {
                     VStack(spacing: 8) {

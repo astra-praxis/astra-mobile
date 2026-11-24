@@ -1,65 +1,119 @@
 import SwiftUI
 
-/// 底部原生输入条：发送走壳自持 WS 的 send 命令
+/// 底部悬浮输入卡（DeepSeek 式）：玻璃圆角卡内含多行输入 + 工具钮 + 发送键。
+/// 顶栏右侧的队列/新对话/配置全部收进这里（靠下拇指区，单手可达）。
 struct InputBar: View {
     @EnvironmentObject var store: ShellStore
 
     @State private var text = ""
     @FocusState private var focused: Bool
 
+    private var canSend: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 6) {
+            card
+            Text(hintText)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+    }
+
+    private var card: some View {
+        VStack(alignment: .leading, spacing: 4) {
             if store.isRunningCurrent {
                 HStack(spacing: 6) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Agent 正在执行…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
+                    ProgressView().controlSize(.mini)
+                    Text("Agent 正在执行，新消息进入队列")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
                 }
-                .padding(.horizontal, 14)
-                .padding(.top, 8)
+                .padding(.leading, 6)
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
 
-            HStack(alignment: .bottom, spacing: 10) {
-                TextField("发送消息到 PC…", text: $text, axis: .vertical)
-                    .lineLimit(1...5)
-                    .padding(10)
-                    .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 14))
-                    .focused($focused)
-                    .onSubmit(send)
+            TextField("发送消息到 PC…", text: $text, axis: .vertical)
+                .lineLimit(1...6)
+                .padding(.horizontal, 6)
+                .padding(.top, 4)
+                .focused($focused)
+                .onSubmit(send)
 
+            HStack(spacing: 6) {
+                // 队列（带未读角标）
+                Button {
+                    store.showQueue = true
+                } label: {
+                    toolIcon("square.stack.3d.up", badge: store.queue.isEmpty ? nil : "\(store.queue.count)")
+                }
+                .glassToolbarButton()
+
+                // 新对话
+                Button {
+                    store.openSession(.new)
+                } label: {
+                    toolIcon("plus.bubble")
+                }
+                .glassToolbarButton()
+                .disabled(store.isScoped)
+
+                // 模型与思考
+                Button {
+                    store.showConfig = true
+                } label: {
+                    toolIcon("slider.horizontal.3")
+                }
+                .glassToolbarButton()
+
+                Spacer()
+
+                // 发送键：卡内右下角
                 Button(action: send) {
-                    if #available(iOS 26.0, *) {
-                        Image(systemName: "paperplane.fill")
-                            .font(.system(size: 16, weight: .semibold))
-                            .frame(width: 40, height: 40)
-                    } else {
-                        Image(systemName: "paperplane.fill")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(width: 40, height: 40)
-                            .background(
-                                text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                    ? Color(.systemGray4)
-                                    : Color.accentColor,
-                                in: Circle()
-                            )
-                    }
+                    Image(systemName: "paperplane.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(
+                            canSend ? Color.accentColor : Color(.systemGray3),
+                            in: Circle()
+                        )
                 }
                 .glassProminentButton()
-                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!canSend)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
         }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+                )
+        )
+    }
 
-        Text(hintText)
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.bottom, 4)
+    private func toolIcon(_ system: String, badge: String? = nil) -> some View {
+        Image(systemName: system)
+            .font(.system(size: 15, weight: .medium))
+            .foregroundStyle(.primary.opacity(0.75))
+            .frame(width: 34, height: 34)
+            .overlay(alignment: .topTrailing) {
+                if let badge {
+                    Text(badge)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(4)
+                        .background(Color.red, in: Circle())
+                        .offset(x: 6, y: -5)
+                }
+            }
     }
 
     private var hintText: String {
@@ -76,114 +130,5 @@ struct InputBar: View {
             text = ""
             focused = false
         }
-    }
-}
-
-// MARK: - 队列面板（原生）：同会话内排序 + 删除
-
-struct QueueSheet: View {
-    @EnvironmentObject var store: ShellStore
-
-    var body: some View {
-        NavigationStack {
-            Group {
-                if store.queue.isEmpty {
-                    VStack(spacing: 10) {
-                        Image(systemName: "square.stack.3d.up.slash")
-                            .font(.system(size: 36))
-                            .foregroundStyle(.secondary)
-                        Text("队列为空")
-                            .font(.headline)
-                        Text("PC 运行中发送的消息会在这里排队，本轮结束后自动续发。")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    List {
-                        ForEach(Array(store.queue.enumerated()), id: \.element.id) { index, item in
-                            QueueRow(item: item,
-                                     canUp: index > 0 && store.queue[index - 1].sessionId == item.sessionId,
-                                     canDown: index < store.queue.count - 1 && store.queue[index + 1].sessionId == item.sessionId,
-                                     previous: index > 0 ? store.queue[index - 1] : nil,
-                                     next: index < store.queue.count - 1 ? store.queue[index + 1] : nil)
-                        }
-                    }
-                    .listStyle(.plain)
-                }
-            }
-            .navigationTitle("PC 发送队列")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        .presentationDetents([.medium, .large])
-    }
-}
-
-private struct QueueRow: View {
-    let item: QueueItem
-    let canUp: Bool
-    let canDown: Bool
-    let previous: QueueItem?
-    let next: QueueItem?
-
-    @EnvironmentObject var store: ShellStore
-
-    private var sessionLabel: String {
-        if item.sessionId.isEmpty { return "新对话" }
-        return store.sessions.first { $0.id == item.sessionId }?.title ?? item.sessionId
-    }
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            VStack(spacing: 6) {
-                Button {
-                    if let previous { store.queueReorder(item: item, target: previous, after: false) }
-                } label: {
-                    Image(systemName: "chevron.up")
-                }
-                .disabled(!canUp)
-
-                Button {
-                    if let next { store.queueReorder(item: item, target: next, after: true) }
-                } label: {
-                    Image(systemName: "chevron.down")
-                }
-                .disabled(!canDown)
-            }
-            .font(.system(size: 13, weight: .medium))
-            .buttonStyle(.borderless)
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(sessionLabel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    if let sender = item.sender {
-                        Text(sender)
-                            .font(.caption2)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.accentColor.opacity(0.15), in: Capsule())
-                    }
-                }
-                Text(item.text)
-                    .font(.callout)
-                    .lineLimit(3)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Button {
-                store.queueRemove(item: item)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.red)
-            }
-            .buttonStyle(.borderless)
-        }
-        .padding(.vertical, 4)
     }
 }

@@ -1,5 +1,4 @@
 import SwiftUI
-import WebKit
 
 /// 根视图：有选中的桌面端 → 应用主壳；否则 → 欢迎页（绑定入口）
 struct RootView: View {
@@ -50,6 +49,7 @@ struct DesktopRoot: View {
     var body: some View {
         AppShellView()
             .environmentObject(shell)
+            .environmentObject(shell.messages)
             .id(desktop.id)
     }
 }

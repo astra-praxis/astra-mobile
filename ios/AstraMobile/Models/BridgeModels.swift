@@ -90,7 +90,8 @@ enum ShellEvent {
     case config(BridgeConfig)
     case toast(String)
     case runSettled(String?)
-    case envelope([String: Any])  // agent-event 载荷（壳只用于「正在执行」与收养）
+    case envelope([String: Any])      // agent-event 载荷
+    case question([String: Any])      // agent-question 载荷（提问/选项）
 
     static func parse(_ dict: [String: Any]) -> ShellEvent? {
         switch dict["type"] as? String {
@@ -114,6 +115,8 @@ enum ShellEvent {
             return .runSettled(sid)
         case "agent-event":
             return .envelope(dict["payload"] as? [String: Any] ?? [:])
+        case "agent-question":
+            return .question(dict["payload"] as? [String: Any] ?? [:])
         default:
             return nil  // pair/pong 等壳不关心
         }

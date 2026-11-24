@@ -1,6 +1,7 @@
 import Foundation
+import SwiftUI
 
-/// 壳的中心状态：连接、会话列表、队列、配置、当前会话与 WebView 打开目标。
+/// 壳的中心状态：连接、会话列表、队列、配置、当前会话与消息中心（MessageStore）。
 /// 与页面遵循同一套行为规则（跟进 PC view、新对话发送后收养、运行状态），见协议文档。
 @MainActor
 final class ShellStore: ObservableObject {
@@ -9,7 +10,7 @@ final class ShellStore: ObservableObject {
     }
 
     enum OpenTarget: Equatable {
-        case follow            // 默认态：跟随 PC 正在看的会话（页面自动收养）
+        case follow            // 默认态：跟随 PC 正在看的会话
         case new               // 新对话（主动新建，不再自动跟进）
         case session(String)   // 指定历史会话
     }
@@ -21,11 +22,15 @@ final class ShellStore: ObservableObject {
     @Published private(set) var openTarget: OpenTarget = .follow
     @Published private(set) var scopedSessionId: String?   // scope=one 时锁定
     @Published private(set) var runningSessionIds: Set<String> = []
-    @Published private(set) var reloadToken = 0            // 变化触发 WebView 重载
     @Published private(set) var toast: String?
+    @Published var showQueue = false
+    @Published var showConfig = false
     @Published var senderName: String {
         didSet { UserDefaults.standard.set(senderName, forKey: "senderName.v1") }
     }
+
+    /// 消息中心：历史拉取 + 实时增量（AppShellView 环境注入）
+    let messages: MessageStore
 
     let desktop: BoundDesktop
     private let secret: String
@@ -35,11 +40,15 @@ final class ShellStore: ObservableObject {
     private var reconnectTask: Task<Void, Never>?
     private var lastNewSendText: String?
     private var toastResetTask: Task<Void, Never>?
+    private var didInitialOpen = false   // 仅首次 hello 自动打开 PC 当前会话；重连不拽走用户视图
+    private(set) var pcCurrent: String?
 
     init(desktop: BoundDesktop, secret: String) {
         self.desktop = desktop
         self.secret = secret
         senderName = UserDefaults.standard.string(forKey: "senderName.v1") ?? "iPhone"
+        let baseURL = "\(desktop.scheme)://\(desktop.host):\(desktop.port)"
+        self.messages = MessageStore(baseURL: baseURL, secret: secret)
     }
 
     // MARK: - 派生状态
@@ -47,7 +56,7 @@ final class ShellStore: ObservableObject {
     var isScoped: Bool { scopedSessionId != nil }
     var isConnected: Bool { connState == .connected }
 
-    /// WebView 顶栏/抽屉用的当前会话标题
+    /// 顶栏/抽屉用的当前会话标题
     var currentTitle: String {
         switch openTarget {
         case .session(let id):
@@ -70,20 +79,7 @@ final class ShellStore: ObservableObject {
         return runningSessionIds.contains(sid)
     }
 
-    private(set) var pcCurrent: String?
-
     var baseURL: String { "\(desktop.scheme)://\(desktop.host):\(desktop.port)" }
-
-    /// WebView 入口 URL：凭证 + 嵌入模式 + 打开目标（凭证为首段，页面解析兼容旧二维码）
-    func entryURL() -> URL? {
-        var fragment = "\(secret)&embed=1"
-        switch openTarget {
-        case .session(let id): fragment += "&open=\(id)"
-        case .new: fragment += "&open=new"
-        case .follow: break
-        }
-        return URL(string: "\(baseURL)/m#\(fragment)")
-    }
 
     // MARK: - 生命周期
 
@@ -100,13 +96,14 @@ final class ShellStore: ObservableObject {
 
     // MARK: - 动作
 
-    /// 打开会话/新对话（WebView 重载，页面走既有 openSession 流程）
+    /// 打开会话/新对话（MessageStore 负责拉历史或清空条目）
     func openSession(_ target: OpenTarget) {
         openTarget = target
-        reloadToken += 1
+        messages.open(target: target)
     }
 
-    /// 发送消息进 PC（新对话时 session_id 传 null，PC 自动建会话）
+    /// 发送消息进 PC（新对话时 session_id 传 null，PC 自动建会话）。
+    /// PC 运行中时消息在 PC 侧自动进入队列（协议既定行为）
     @discardableResult
     func send(_ text: String) -> Bool {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -129,6 +126,16 @@ final class ShellStore: ObservableObject {
         if case .new = openTarget { lastNewSendText = body }
         sendCommand(command)
         return true
+    }
+
+    /// 工具调用权限裁决（手机页 permission_decide 同款命令）
+    func permissionDecide(callId: String, decision: String) {
+        sendCommand(["type": "permission_decide", "tool_call_id": callId, "decision": decision])
+    }
+
+    /// 回答 Agent 提问（手机页 question_answer 同款命令）
+    func questionAnswer(questionId: String, answer: String) {
+        sendCommand(["type": "question_answer", "question_id": questionId, "answer": answer])
     }
 
     func queueReorder(item: QueueItem, target: QueueItem, after: Bool) {
@@ -247,10 +254,20 @@ final class ShellStore: ObservableObject {
             scopedSessionId = scope == "one" ? current : nil
             connState = .connected
             backoff = 1
+            // 首次连接：停在默认态（follow）时自动打开 PC 当前会话（页面「收养」语义）
+            if !didInitialOpen {
+                didInitialOpen = true
+                if case .follow = openTarget, let sid = current {
+                    messages.openSession(sid)
+                }
+            }
         case .view(let sid):
-            // 与页面同一规则：仅停在默认态（follow）时页面会自动收养并渲染，
-            // 壳只记录用于标题展示，不重载 WebView（避免双重加载）
+            // 与页面同一规则：仅停在默认态（follow）时收养 PC 切换的会话；
+            // 用户已显式选择（指定会话/新对话）时不拽走视图
             pcCurrent = sid
+            if case .follow = openTarget {
+                messages.openSession(sid)
+            }
         case .queue(let items):
             queue = items
         case .config(let config):
@@ -262,11 +279,16 @@ final class ShellStore: ObservableObject {
             refreshSessions()  // 新会话首次落盘后让列表出现
         case .envelope(let env):
             handleEnvelope(env)
+        case .question(let q):
+            messages.applyQuestion(q)
         }
     }
 
     private func handleEnvelope(_ env: [String: Any]) {
         let sid = env["session_id"] as? String
+        // 全量喂给消息中心（历史/流式渲染的唯一来源）
+        messages.applyEnvelope(env)
+        // 壳侧只额外维护「正在执行」与收养
         switch env["type"] as? String {
         case "message_delta", "thinking_delta", "tool_call_started",
              "tool_call_args_delta", "permission_requested", "status_changed":
@@ -274,7 +296,8 @@ final class ShellStore: ObservableObject {
         case "run_completed", "run_failed", "run_cancelled":
             if let sid { runningSessionIds.remove(sid) }
         case "user_message":
-            // 新对话发送后的收养：PC 广播的 user_message 与本机最近一次发送文本匹配
+            // 新对话发送后的收养：PC 广播的 user_message 与本机最近一次发送文本匹配。
+            // 此时消息中心还没该会话历史，envelope 已在其 pending 缓冲，切过去即回放
             if case .new = openTarget, let sid,
                let text = env["text"] as? String,
                text == lastNewSendText {
