@@ -1,53 +1,58 @@
 import SwiftUI
 
-/// 应用主壳：环境光背景 + 全屏消息流 + 悬浮玻璃顶栏/输入卡 + 玻璃抽屉（推挤）。
+/// 应用主壳：环境光背景 + 全屏消息流 + 悬浮玻璃顶栏/输入卡 + 左侧负一屏（推挤）。
 /// 内容从顶栏与输入条底下滚过（scroll-under）。
-/// 抽屉为进度驱动（0→1）：左缘右滑跟手拉出，暗化层左滑跟手收起，
-/// 松手按甩动意图/过半判定落点，弹簧归位。
+/// 负一屏为进度驱动（0→1）：贴边全高、占屏宽 85%、与主界面同底色，
+/// 左缘右滑跟手拉出 / 顶栏搜索点按直达（自动聚焦搜索框），
+/// 暗化层左滑跟手收起，松手按甩动意图/过半判定落点，弹簧归位。
 struct AppShellView: View {
     @EnvironmentObject var store: ShellStore
     @EnvironmentObject var appState: AppState
 
-    /// 抽屉进度 0(关)→1(开)：拖动中逐帧跟手，松手后弹簧落到端点
+    /// 负一屏进度 0(关)→1(开)：拖动中逐帧跟手，松手后弹簧落到端点
     @State private var drawerProgress: CGFloat = 0
     @State private var dragBase: CGFloat?
     @State private var dragHorizontal: Bool?
+    /// 顶栏搜索点开的那一次：负一屏滑出后自动聚焦搜索框
+    @State private var focusSearchOnOpen = false
 
-    private let drawerWidth: CGFloat = 292
     private let pushFraction: CGFloat = 0.88
 
     var body: some View {
-        ZStack {
-            AmbientBackground()
+        GeometryReader { geo in
+            let panelWidth = geo.size.width * 0.85
+            ZStack {
+                AmbientBackground()
 
-            ZStack(alignment: .leading) {
-                mainContent
-                    .offset(x: drawerWidth * pushFraction * drawerProgress)
-                    .scaleEffect(1 - 0.015 * drawerProgress)
+                ZStack(alignment: .leading) {
+                    mainContent
+                        .offset(x: panelWidth * pushFraction * drawerProgress)
+                        .scaleEffect(1 - 0.015 * drawerProgress)
 
-                // 左缘手势条：屏幕左缘右滑，抽屉跟手拉出
-                Color.clear
-                    .frame(width: 18)
-                    .frame(maxHeight: .infinity)
-                    .contentShape(Rectangle())
-                    .gesture(edgeDrag)
-                    .allowsHitTesting(drawerProgress < 0.05)
-                    .zIndex(1)
+                    // 左缘手势条：屏幕左缘右滑，负一屏跟手拉出
+                    Color.clear
+                        .frame(width: 18)
+                        .frame(maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                        .gesture(edgeDrag(width: panelWidth))
+                        .allowsHitTesting(drawerProgress < 0.05)
+                        .zIndex(1)
 
-                // 暗化层：透明度随进度渐显；点按收起，左滑跟手收起
-                Color.black.opacity(0.28 * drawerProgress)
-                    .ignoresSafeArea()
-                    .contentShape(Rectangle())
-                    .onTapGesture { closeDrawer() }
-                    .gesture(edgeDrag)
-                    .allowsHitTesting(drawerProgress > 0.05)
-                    .zIndex(2)
+                    // 暗化层：透明度随进度渐显；点按收起，左滑跟手收起
+                    Color.black.opacity(0.28 * drawerProgress)
+                        .ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture { closeDrawer() }
+                        .gesture(edgeDrag(width: panelWidth))
+                        .allowsHitTesting(drawerProgress > 0.05)
+                        .zIndex(2)
 
-                if drawerProgress > 0 {
-                    DrawerView(isOpen: drawerIsOpen, width: drawerWidth)
-                        .simultaneousGesture(edgeDrag)   // 抽屉本体上左滑也能收（与 List 纵向滚动方向竞争）
-                        .offset(x: (drawerProgress - 1) * drawerWidth)
-                        .zIndex(3)
+                    if drawerProgress > 0 {
+                        DrawerView(isOpen: drawerIsOpen, width: panelWidth, focusSearch: $focusSearchOnOpen)
+                            .simultaneousGesture(edgeDrag(width: panelWidth))   // 本体上左滑也能收（与 List 纵向滚动方向竞争）
+                            .offset(x: (drawerProgress - 1) * panelWidth)
+                            .zIndex(3)
+                    }
                 }
             }
         }
@@ -65,30 +70,39 @@ struct AppShellView: View {
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: store.toast)
-        .onAppear { store.start() }
+        .onAppear {
+            store.start()
+            #if DEBUG
+            // 模拟器截图/调试钩子：启动直接展开负一屏
+            if ProcessInfo.processInfo.arguments.contains("-mockOpenPanel") {
+                drawerProgress = 1
+                store.refreshSessions()
+            }
+            #endif
+        }
         .onDisappear { store.stop() }
     }
 
     // MARK: - 抽屉手势与开合
 
-    /// 同一根跟手拖拽：开（左缘条）、收（暗化层）、收（抽屉本体横向甩动）共用。
-    /// 首帧判定横向轴，纵向拖动不劫持（抽屉内 List 照常滚动）。
-    private var edgeDrag: some Gesture {
+    /// 同一根跟手拖拽：开（左缘条）、收（暗化层）、收（本体横向甩动）共用。
+    /// 首帧判定横向轴，纵向拖动不劫持（负一屏内 List 照常滚动）。
+    private func edgeDrag(width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 14, coordinateSpace: .global)
-            .onChanged { updateDrag($0) }
-            .onEnded { finishDrag($0) }
+            .onChanged { updateDrag($0, width: width) }
+            .onEnded { finishDrag($0, width: width) }
     }
 
-    private func updateDrag(_ v: DragGesture.Value) {
+    private func updateDrag(_ v: DragGesture.Value, width: CGFloat) {
         if dragBase == nil {
             dragBase = drawerProgress
             dragHorizontal = abs(v.translation.width) >= abs(v.translation.height)
         }
         guard dragHorizontal == true else { return }
-        drawerProgress = min(1, max(0, (dragBase ?? 0) + v.translation.width / drawerWidth))
+        drawerProgress = min(1, max(0, (dragBase ?? 0) + v.translation.width / width))
     }
 
-    private func finishDrag(_ v: DragGesture.Value) {
+    private func finishDrag(_ v: DragGesture.Value, width: CGFloat) {
         defer {
             dragBase = nil
             dragHorizontal = nil
@@ -158,22 +172,44 @@ struct AppShellView: View {
             }
             .glassToolbarButton()
 
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(connColor)
-                    .frame(width: 7, height: 7)
-                    .shadow(color: connColor.opacity(0.6), radius: 3)
-                Text(connText)
-                    .font(.system(.caption2, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            // 搜索入口：点按直接展开负一屏并聚焦搜索框
+            Button {
+                focusSearchOnOpen = true
+                openDrawer()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.footnote)
+                    Text("搜索历史对话")
+                        .font(.system(.subheadline, design: .rounded))
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(.secondary)
+                .padding(.leading, 12)
+                .frame(height: 34)
+                .contentShape(Capsule())
             }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 7)
-            .glassCapsule()
+            .glassCapsuleButton()
 
-            Spacer(minLength: 0)
+            statusPill
         }
+    }
+
+    private var statusPill: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(connColor)
+                .frame(width: 7, height: 7)
+                .shadow(color: connColor.opacity(0.6), radius: 3)
+            Text(connText)
+                .font(.system(.caption2, design: .rounded))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 7)
+        .glassCapsule()
     }
 
     private var connColor: Color {
@@ -193,15 +229,19 @@ struct AppShellView: View {
     }
 }
 
-// MARK: - 左抽屉：悬浮玻璃面板（搜索 + 历史会话 + 用户入口）
+// MARK: - 左侧负一屏：贴边全高（占屏宽 85%），与主界面同底色（同一张壁纸），
+// 右缘发丝线 + 投影分层；搜索 + 历史会话 + 用户入口
 
 struct DrawerView: View {
     @EnvironmentObject var store: ShellStore
     @Binding var isOpen: Bool
     let width: CGFloat
+    /// 顶栏搜索点进来的那次打开：滑出后自动聚焦搜索框
+    @Binding var focusSearch: Bool
 
     @State private var query = ""
     @State private var showUser = false
+    @FocusState private var searchFocused: Bool
 
     private var filtered: [SessionMeta] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -214,14 +254,14 @@ struct DrawerView: View {
     var body: some View {
         VStack(spacing: 0) {
             searchField
-                .padding(.horizontal, 14)
-                .padding(.top, 16)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
 
             Text("历史会话")
                 .font(.system(.caption2, design: .rounded).weight(.semibold))
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 18)
                 .padding(.top, 14)
                 .padding(.bottom, 4)
 
@@ -242,7 +282,7 @@ struct DrawerView: View {
                     sessionRow(session)
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
-                        .listRowInsets(EdgeInsets(top: 5, leading: 12, bottom: 5, trailing: 12))
+                        .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
@@ -264,7 +304,7 @@ struct DrawerView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.tertiary)
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 18)
                 .padding(.vertical, 14)
                 .contentShape(Rectangle())
             }
@@ -273,11 +313,34 @@ struct DrawerView: View {
         }
         .frame(width: width)
         .frame(maxHeight: .infinity)
-        .glassCard(cornerRadius: 26, shadow: true)
-        .padding(.leading, 10)
-        .padding(.vertical, 10)
+        .background {
+            // 同一张环境光壁纸：负一屏与主界面共底色，像同一张屏的左右两页
+            AmbientBackground()
+        }
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.10))
+                .frame(width: 0.5)
+        }
+        .shadow(color: .black.opacity(0.16), radius: 22, x: 8)
         .sheet(isPresented: $showUser) { UserSheet() }
-        .onAppear { store.refreshSessions() }
+        .onAppear {
+            store.refreshSessions()
+            focusIfRequested()
+        }
+        .onChange(of: isOpen) { open in
+            if open { focusIfRequested() } else { searchFocused = false }
+        }
+    }
+
+    /// 顶栏搜索点进来的那次打开：等滑出动画过半再聚焦，弹键盘
+    private func focusIfRequested() {
+        guard focusSearch else { return }
+        focusSearch = false
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 380_000_000)
+            searchFocused = true
+        }
     }
 
     private var searchField: some View {
@@ -287,6 +350,8 @@ struct DrawerView: View {
                 .foregroundStyle(.secondary)
             TextField("搜索历史对话", text: $query)
                 .font(.body)
+                .submitLabel(.search)
+                .focused($searchFocused)
             if !query.isEmpty {
                 Button {
                     query = ""
@@ -298,9 +363,9 @@ struct DrawerView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Color.primary.opacity(0.05), in: Capsule())
+        .padding(.horizontal, 13)
+        .padding(.vertical, 11)
+        .background(Color.primary.opacity(0.06), in: Capsule())
     }
 
     private func sessionRow(_ session: SessionMeta) -> some View {

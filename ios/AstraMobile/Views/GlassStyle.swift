@@ -62,6 +62,18 @@ extension View {
         }
     }
 
+    /// 玻璃胶囊按钮（可交互胶囊，如顶栏搜索入口）：interactive 触摸流体反应
+    @ViewBuilder
+    func glassCapsuleButton() -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular.interactive(), in: Capsule())
+        } else {
+            self
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().stroke(Color.primary.opacity(0.07), lineWidth: 0.5))
+        }
+    }
+
     /// 玻璃圆面（FAB 等可交互圆钮；装饰座传 interactive: false）
     @ViewBuilder
     func glassCircle(size: CGFloat, interactive: Bool = true) -> some View {
