@@ -1,11 +1,20 @@
 import SwiftUI
 
-/// 底部原生输入条：发送走壳自持 WS 的 send 命令
+/// 底部原生输入条：PC Composer 风格——
+/// 大号透明玻璃圆角框，发送键与工具钮（队列/新对话/配置）都框内右下/左下，
+/// 发送走壳自持 WS 的 send 命令
 struct InputBar: View {
     @EnvironmentObject var store: ShellStore
+    var onQueue: () -> Void = {}
+    var onNew: () -> Void = {}
+    var onConfig: () -> Void = {}
 
     @State private var text = ""
     @FocusState private var focused: Bool
+
+    private var canSend: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,44 +31,78 @@ struct InputBar: View {
                 .padding(.top, 8)
             }
 
-            HStack(alignment: .bottom, spacing: 10) {
+            // 玻璃框：textarea + 工具行
+            VStack(alignment: .leading, spacing: 8) {
                 TextField("发送消息到 PC…", text: $text, axis: .vertical)
-                    .lineLimit(1...5)
-                    .padding(10)
-                    .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 14))
+                    .lineLimit(2...6)
+                    .frame(minHeight: 64, alignment: .topLeading)
                     .focused($focused)
                     .onSubmit(send)
 
-                Button(action: send) {
-                    if #available(iOS 26.0, *) {
-                        Image(systemName: "paperplane.fill")
-                            .font(.system(size: 16, weight: .semibold))
-                            .frame(width: 40, height: 40)
-                    } else {
-                        Image(systemName: "paperplane.fill")
-                            .font(.system(size: 16, weight: .semibold))
+                HStack(spacing: 10) {
+                    toolbarButton("square.stack.3d.up", badge: store.queue.isEmpty ? nil : "\(store.queue.count)", action: onQueue)
+                    toolbarButton("plus.bubble", action: onNew)
+                        .disabled(store.isScoped)
+                    toolbarButton("slider.horizontal.3", action: onConfig)
+
+                    Spacer()
+
+                    Button(action: send) {
+                        if #available(iOS 26.0, *) {
+                            Image(systemName: "paperplane.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                                .frame(width: 36, height: 36)
+                        } else {
+                            Image(systemName: "paperplane.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 36, height: 36)
+                                .background(
+                                    canSend ? Color.accentColor : Color(.systemGray4),
+                                    in: Circle()
+                                )
+                        }
+                    }
+                    .glassProminentButton()
+                    .disabled(!canSend)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(focused ? 0.16 : 0.08), lineWidth: 1)
+            )
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+
+            Text(hintText)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.bottom, 4)
+        }
+    }
+
+    @ViewBuilder
+    private func toolbarButton(_ systemName: String, badge: String? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 15, weight: .medium))
+                .overlay(alignment: .topTrailing) {
+                    if let badge {
+                        Text(badge)
+                            .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(.white)
-                            .frame(width: 40, height: 40)
-                            .background(
-                                text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                    ? Color(.systemGray4)
-                                    : Color.accentColor,
-                                in: Circle()
-                            )
+                            .padding(4)
+                            .background(Color.red, in: Circle())
+                            .offset(x: 7, y: -7)
                     }
                 }
-                .glassProminentButton()
-                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+                .frame(width: 34, height: 34)
         }
-
-        Text(hintText)
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.bottom, 4)
+        .glassToolbarButton()
     }
 
     private var hintText: String {
