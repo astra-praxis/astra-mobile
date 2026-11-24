@@ -26,6 +26,8 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         NSCameraUsageDescription: 用于扫描 Astra 桌面端的绑定二维码
+        NSMicrophoneUsageDescription: 用于按住说话，将语音转为文字发送
+        NSSpeechRecognitionUsageDescription: 用于将你说的话实时转写为文字
         NSLocalNetworkUsageDescription: 用于连接同一局域网内的 Astra 桌面端
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
