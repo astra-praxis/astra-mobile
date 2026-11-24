@@ -66,20 +66,17 @@ struct AppShellView: View {
             }
             .glassToolbarButton()
 
-            VStack(spacing: 2) {
-                Text(store.currentTitle)
-                    .font(.headline)
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(connColor)
+                    .frame(width: 7, height: 7)
+                Text(connText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(connColor)
-                        .frame(width: 7, height: 7)
-                    Text(connText)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
             }
-            .frame(maxWidth: .infinity)
+
+            Spacer(minLength: 8)
 
             Button {
                 showQueue = true
@@ -118,7 +115,6 @@ struct AppShellView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(.bar)
     }
 
     private var connColor: Color {

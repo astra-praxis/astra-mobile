@@ -53,14 +53,13 @@ struct InputBar: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-
-            Text(hintText)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.bottom, 4)
         }
-        .background(.bar)
+
+        Text(hintText)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.bottom, 4)
     }
 
     private var hintText: String {
