@@ -41,6 +41,13 @@ struct InputBar: View {
                 .frame(minHeight: 58, alignment: .topLeading)   // 空态也有两三行高度，文本顶对齐
                 .focused($focused)
                 .onSubmit(send)
+                .onChange(of: text) { newValue in
+                    // 轴向 TextField 的回车是插换行、不触发 onSubmit：
+                    // 检测到末尾换行即视为键盘快速发送（拼音组合中的回车会先上屏，不会误发）
+                    guard newValue.hasSuffix("\n") else { return }
+                    text = String(newValue.dropLast())
+                    send()
+                }
 
             HStack(spacing: 8) {
                 toolButton("square.stack.3d.up", badge: store.queue.isEmpty ? nil : "\(store.queue.count)") {
@@ -135,7 +142,7 @@ struct InputBar: View {
         if store.connState == .disconnected { return "未连接，消息无法发送" }
         if store.isScoped { return "绑定会话模式：消息直接进入该会话" }
         if case .new = store.openTarget { return "新对话：发送后 PC 自动建立会话" }
-        return "空闲：消息直接发送 · 运行中自动排队"
+        return "回车快速发送 · 运行中自动排队"
     }
 
     private func send() {
@@ -143,7 +150,7 @@ struct InputBar: View {
         guard !trimmed.isEmpty else { return }
         if store.send(text) {
             text = ""
-            focused = false
+            // 不收键盘：保留焦点方便连续快速发送
         }
     }
 }
