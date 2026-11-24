@@ -64,6 +64,7 @@ struct AppShellView: View {
                 Image(systemName: "line.3.horizontal")
                     .font(.system(size: 17, weight: .medium))
             }
+            .glassToolbarButton()
 
             VStack(spacing: 2) {
                 Text(store.currentTitle)
@@ -96,6 +97,7 @@ struct AppShellView: View {
                         }
                     }
             }
+            .glassToolbarButton()
 
             Button {
                 store.openSession(.new)
@@ -103,6 +105,7 @@ struct AppShellView: View {
                 Image(systemName: "plus.bubble")
                     .font(.system(size: 16, weight: .medium))
             }
+            .glassToolbarButton()
             .disabled(store.isScoped)
 
             Button {
@@ -111,6 +114,7 @@ struct AppShellView: View {
                 Image(systemName: "slider.horizontal.3")
                     .font(.system(size: 16, weight: .medium))
             }
+            .glassToolbarButton()
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -168,6 +172,7 @@ struct DrawerView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 10)
                 }
+                .glassProminentButton()
                 .disabled(store.isScoped)
                 .padding(.horizontal, 14)
                 .padding(.top, 8)

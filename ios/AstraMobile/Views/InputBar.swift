@@ -31,17 +31,24 @@ struct InputBar: View {
                     .onSubmit(send)
 
                 Button(action: send) {
-                    Image(systemName: "paperplane.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 40, height: 40)
-                        .background(
-                            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                ? Color(.systemGray4)
-                                : Color.accentColor,
-                            in: Circle()
-                        )
+                    if #available(iOS 26.0, *) {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(width: 40, height: 40)
+                    } else {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 40, height: 40)
+                            .background(
+                                text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                    ? Color(.systemGray4)
+                                    : Color.accentColor,
+                                in: Circle()
+                            )
+                    }
                 }
+                .glassProminentButton()
                 .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .padding(.horizontal, 14)
