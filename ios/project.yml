@@ -24,6 +24,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         NSCameraUsageDescription: 用于扫描 Astra 桌面端的绑定二维码
+        NSLocalNetworkUsageDescription: 用于连接同一局域网内的 Astra 桌面端
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         CFBundleURLTypes:
