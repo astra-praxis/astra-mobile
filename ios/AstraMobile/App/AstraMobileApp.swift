@@ -26,6 +26,7 @@ final class AppState: ObservableObject {
 
 /// 深链：astra://bind?url=<URL 编码后的入口 URL>
 enum DeepLink {
+    @MainActor
     static func handle(_ url: URL, store: DesktopStore) {
         guard url.scheme?.lowercased() == "astra",
               url.host?.lowercased() == "bind" else { return }

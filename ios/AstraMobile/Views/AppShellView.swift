@@ -185,7 +185,7 @@ struct DrawerView: View {
                     List(filtered) { session in
                         sessionRow(session)
                             .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets(top: 6, bottom: 6, leading: 14, trailing: 14))
+                            .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
                     }
                     .listStyle(.plain)
                 }
