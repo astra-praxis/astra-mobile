@@ -23,6 +23,8 @@ final class MessageStore: ObservableObject {
     private var working: [ChatEntry] = []
     private var flushTimer: Timer?
     private var loadGeneration = 0  // 防过期响应覆盖（快速切会话）
+    /// 当前会话 run 完成时最后一条 assistant 的完整文本（供 TTS 朗读；历史回放不触发）
+    var onAssistantFinished: ((String) -> Void)?
 
     init(baseURL: String, secret: String) {
         self.baseURL = baseURL
@@ -145,6 +147,9 @@ final class MessageStore: ObservableObject {
         // 同步缓存
         if let sid = currentSessionId {
             loadedEntries[sid] = working
+        }
+        if type == "run_completed", let text = working.last(where: { $0.kind == "assistant" })?.text {
+            onAssistantFinished?(text)
         }
     }
 

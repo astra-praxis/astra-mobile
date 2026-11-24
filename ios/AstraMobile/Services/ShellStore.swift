@@ -28,6 +28,13 @@ final class ShellStore: ObservableObject {
     @Published var senderName: String {
         didSet { UserDefaults.standard.set(senderName, forKey: "senderName.v1") }
     }
+    /// 朗读开关：开启后当前会话 agent 回复完成时自动朗读
+    @Published var ttsEnabled: Bool {
+        didSet { UserDefaults.standard.set(ttsEnabled, forKey: "ttsEnabled.v1") }
+    }
+
+    /// 朗读器（顶栏开关控制；朗读中点按可停止本次）
+    let tts = TTSReader()
 
     /// 消息中心：历史拉取 + 实时增量（AppShellView 环境注入）
     let messages: MessageStore
@@ -47,8 +54,13 @@ final class ShellStore: ObservableObject {
         self.desktop = desktop
         self.secret = secret
         senderName = UserDefaults.standard.string(forKey: "senderName.v1") ?? "iPhone"
+        ttsEnabled = UserDefaults.standard.bool(forKey: "ttsEnabled.v1")
         let baseURL = "\(desktop.scheme)://\(desktop.host):\(desktop.port)"
         self.messages = MessageStore(baseURL: baseURL, secret: secret)
+        messages.onAssistantFinished = { [weak self] text in
+            guard let self, self.ttsEnabled else { return }
+            self.tts.speak(text)
+        }
     }
 
     // MARK: - 派生状态

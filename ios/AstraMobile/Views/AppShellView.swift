@@ -192,8 +192,48 @@ struct AppShellView: View {
             }
             .glassCapsuleButton()
 
+            ttsButton
+
+            Button {
+                store.openSession(.new)
+            } label: {
+                Image(systemName: "plus.bubble")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.primary.opacity(0.8))
+                    .frame(width: 34, height: 34)
+            }
+            .glassToolbarButton()
+            .disabled(store.isScoped)
+            .opacity(store.isScoped ? 0.4 : 1)
+
             statusPill
         }
+    }
+
+    /// 朗读开关：关→开（agent 回复完成自动朗读）；朗读中点按停止本次；开→关
+    private var ttsButton: some View {
+        Button {
+            if store.tts.speaking {
+                store.tts.stop()
+            } else if store.ttsEnabled {
+                store.ttsEnabled = false
+            } else {
+                store.ttsEnabled = true
+            }
+        } label: {
+            Image(systemName: store.ttsEnabled ? "speaker.wave.2" : "speaker.slash")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(topBarIconTint)
+                .frame(width: 34, height: 34)
+        }
+        .glassToolbarButton()
+        .animation(.spring(response: 0.28, dampingFraction: 0.8), value: store.ttsEnabled)
+        .animation(.spring(response: 0.28, dampingFraction: 0.8), value: store.tts.speaking)
+    }
+
+    private var topBarIconTint: Color {
+        if store.tts.speaking { return .accentColor }
+        return store.ttsEnabled ? .primary.opacity(0.85) : .primary.opacity(0.45)
     }
 
     private var statusPill: some View {
@@ -206,6 +246,7 @@ struct AppShellView: View {
                 .font(.system(.caption2, design: .rounded))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .fixedSize()
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 7)
@@ -222,9 +263,9 @@ struct AppShellView: View {
 
     private var connText: String {
         switch store.connState {
-        case .connected: return store.isScoped ? "已连接 · 绑定会话" : "已连接 · \(store.sessions.count) 个会话"
+        case .connected: return store.isScoped ? "绑定会话" : "\(store.sessions.count) 个会话"
         case .connecting: return "连接中…"
-        case .disconnected: return "未连接，重试中"
+        case .disconnected: return "未连接"
         }
     }
 }

@@ -64,11 +64,6 @@ struct InputBar: View {
                 }
                 .disabled(false)
 
-                toolButton("plus.bubble") {
-                    store.openSession(.new)
-                }
-                .disabled(store.isScoped)
-
                 toolButton("slider.horizontal.3") {
                     store.showConfig = true
                 }
@@ -76,9 +71,9 @@ struct InputBar: View {
                 Spacer(minLength: 0)
 
                 if voiceMode {
-                    modeSwitchButton(icon: "keyboard", label: "键盘")
+                    modeSwitchButton(icon: "keyboard")
                 } else {
-                    modeSwitchButton(icon: "mic", label: "语音")
+                    modeSwitchButton(icon: "mic")
                     sendButton
                 }
             }
@@ -210,27 +205,20 @@ struct InputBar: View {
 
     // MARK: - 工具钮 / 发送键
 
-    /// 语音/文字模式切换钮：与工具钮同规格，收在卡内右下
-    private func modeSwitchButton(icon: String, label: String) -> some View {
+    /// 语音/文字模式切换钮：与工具钮同规格（纯图标），收在卡内右下
+    private func modeSwitchButton(icon: String) -> some View {
         Button {
             pressHint = ""
             withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
                 voiceMode.toggle()
             }
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .medium))
-                Text(label)
-                    .font(.system(size: 12, design: .rounded).weight(.medium))
-                    .lineLimit(1)
-                    .fixedSize()
-            }
-            .foregroundStyle(.primary.opacity(0.7))
-            .padding(.horizontal, 10)
-            .frame(height: 32)
-            .background(Color.primary.opacity(0.05), in: Capsule())
-            .contentShape(Capsule())
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.primary.opacity(0.7))
+                .frame(width: 32, height: 32)
+                .background(Color.primary.opacity(0.05), in: Circle())
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .disabled(speech.recording)   // 录音中不许切，避免状态打架
