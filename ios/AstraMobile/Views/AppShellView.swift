@@ -2,11 +2,16 @@ import SwiftUI
 
 /// 应用主壳：环境光背景 + 全屏消息流 + 悬浮玻璃顶栏/输入卡 + 玻璃抽屉（推挤）。
 /// 内容从顶栏与输入条底下滚过（scroll-under）。
+/// 抽屉为进度驱动（0→1）：左缘右滑跟手拉出，暗化层左滑跟手收起，
+/// 松手按甩动意图/过半判定落点，弹簧归位。
 struct AppShellView: View {
     @EnvironmentObject var store: ShellStore
     @EnvironmentObject var appState: AppState
 
-    @State private var drawerOpen = false
+    /// 抽屉进度 0(关)→1(开)：拖动中逐帧跟手，松手后弹簧落到端点
+    @State private var drawerProgress: CGFloat = 0
+    @State private var dragBase: CGFloat?
+    @State private var dragHorizontal: Bool?
 
     private let drawerWidth: CGFloat = 292
     private let pushFraction: CGFloat = 0.88
@@ -17,22 +22,32 @@ struct AppShellView: View {
 
             ZStack(alignment: .leading) {
                 mainContent
-                    .offset(x: drawerOpen ? drawerWidth * pushFraction : 0)
-                    .animation(.spring(response: 0.32, dampingFraction: 0.86), value: drawerOpen)
-                    .scaleEffect(drawerOpen ? 0.985 : 1)
-                    .animation(.spring(response: 0.32, dampingFraction: 0.86), value: drawerOpen)
+                    .offset(x: drawerWidth * pushFraction * drawerProgress)
+                    .scaleEffect(1 - 0.015 * drawerProgress)
 
-                if drawerOpen {
-                    // 主内容上的暗化层（点按收抽屉）
-                    Color.black.opacity(0.28)
-                        .ignoresSafeArea()
-                        .onTapGesture { closeDrawer() }
-                        .transition(.opacity)
-                        .zIndex(1)
+                // 左缘手势条：屏幕左缘右滑，抽屉跟手拉出
+                Color.clear
+                    .frame(width: 18)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .gesture(edgeDrag)
+                    .allowsHitTesting(drawerProgress < 0.05)
+                    .zIndex(1)
 
-                    DrawerView(isOpen: $drawerOpen, width: drawerWidth)
-                        .transition(.move(edge: .leading).combined(with: .opacity))
-                        .zIndex(2)
+                // 暗化层：透明度随进度渐显；点按收起，左滑跟手收起
+                Color.black.opacity(0.28 * drawerProgress)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture { closeDrawer() }
+                    .gesture(edgeDrag)
+                    .allowsHitTesting(drawerProgress > 0.05)
+                    .zIndex(2)
+
+                if drawerProgress > 0 {
+                    DrawerView(isOpen: drawerIsOpen, width: drawerWidth)
+                        .simultaneousGesture(edgeDrag)   // 抽屉本体上左滑也能收（与 List 纵向滚动方向竞争）
+                        .offset(x: (drawerProgress - 1) * drawerWidth)
+                        .zIndex(3)
                 }
             }
         }
@@ -54,8 +69,54 @@ struct AppShellView: View {
         .onDisappear { store.stop() }
     }
 
+    // MARK: - 抽屉手势与开合
+
+    /// 同一根跟手拖拽：开（左缘条）、收（暗化层）、收（抽屉本体横向甩动）共用。
+    /// 首帧判定横向轴，纵向拖动不劫持（抽屉内 List 照常滚动）。
+    private var edgeDrag: some Gesture {
+        DragGesture(minimumDistance: 14, coordinateSpace: .global)
+            .onChanged { updateDrag($0) }
+            .onEnded { finishDrag($0) }
+    }
+
+    private func updateDrag(_ v: DragGesture.Value) {
+        if dragBase == nil {
+            dragBase = drawerProgress
+            dragHorizontal = abs(v.translation.width) >= abs(v.translation.height)
+        }
+        guard dragHorizontal == true else { return }
+        drawerProgress = min(1, max(0, (dragBase ?? 0) + v.translation.width / drawerWidth))
+    }
+
+    private func finishDrag(_ v: DragGesture.Value) {
+        defer {
+            dragBase = nil
+            dragHorizontal = nil
+        }
+        guard dragHorizontal == true else { return }
+        // 甩动意图优先（预测位移超过阈值），否则看过没过半程
+        let predicted = v.predictedEndTranslation.width
+        let shouldOpen = abs(predicted) > 70 ? predicted > 0 : drawerProgress > 0.5
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.87)) {
+            drawerProgress = shouldOpen ? 1 : 0
+        }
+        if shouldOpen { store.refreshSessions() }
+    }
+
+    private func openDrawer() {
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.87)) { drawerProgress = 1 }
+        store.refreshSessions()
+    }
+
     private func closeDrawer() {
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { drawerOpen = false }
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { drawerProgress = 0 }
+    }
+
+    /// DrawerView 只认 Bool：>0.5 视为开，置 false 即弹簧收起
+    private var drawerIsOpen: Binding<Bool> {
+        Binding(
+            get: { drawerProgress > 0.5 },
+            set: { if !$0 { closeDrawer() } })
     }
 
     private var mainContent: some View {
@@ -68,10 +129,10 @@ struct AppShellView: View {
 
     private var topBar: some View {
         topBarRow
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 18)
             .padding(.top, 6)
             .padding(.bottom, 4)
-    }
+        }
 
     @ViewBuilder
     private var topBarRow: some View {
@@ -88,7 +149,7 @@ struct AppShellView: View {
     private var topBarContent: some View {
         HStack(spacing: 10) {
             Button {
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { drawerOpen = true }
+                openDrawer()
             } label: {
                 Image(systemName: "line.3.horizontal")
                     .font(.system(size: 15, weight: .semibold))

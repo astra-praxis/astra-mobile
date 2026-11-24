@@ -21,7 +21,7 @@ struct InputBar: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.bottom, 2)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 18)
         .padding(.top, 6)
     }
 
