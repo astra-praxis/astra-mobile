@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 底部悬浮玻璃输入卡：多行输入 + 玻璃工具钮 + 品牌渐变发送键。
+/// 底部悬浮玻璃输入卡：多行输入 + 浅色工具钮（卡内不嵌玻璃）+ 品牌渐变发送键。
 /// 队列/新对话/模型与思考收在卡内左下（单手可达），发送在右下。
 struct InputBar: View {
     @EnvironmentObject var store: ShellStore
@@ -69,7 +69,7 @@ struct InputBar: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: store.isRunningCurrent)
     }
 
-    /// 执行中指示：呼吸点胶囊（替代旧橙条）
+    /// 执行中指示：呼吸点胶囊（玻璃卡内部不嵌玻璃，用纯色胶囊）
     private var runningPill: some View {
         HStack(spacing: 7) {
             PulseDots()
@@ -79,21 +79,23 @@ struct InputBar: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .glassCapsule()
+        .background(Color.orange.opacity(0.12), in: Capsule())
         .padding(.leading, 4)
         .padding(.top, 4)
     }
 
     // MARK: - 工具钮 / 发送键
 
+    /// 卡内工具钮：玻璃卡内部不嵌玻璃（官方规范），用浅色圆底 + 普通图标
     private func toolButton(_ system: String, badge: String? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: system)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.primary.opacity(0.7))
                 .frame(width: 32, height: 32)
+                .background(Color.primary.opacity(0.05), in: Circle())
         }
-        .glassToolbarButton()
+        .buttonStyle(.plain)
         .overlay(alignment: .topTrailing) {
             if let badge {
                 Text(badge)
@@ -120,7 +122,7 @@ struct InputBar: View {
                 )
                 .shadow(color: canSend ? Color.accentColor.opacity(0.4) : .clear, radius: 9, y: 3)
         }
-        .glassProminentButton()
+        .buttonStyle(.plain)
         .disabled(!canSend)
         .scaleEffect(canSend ? 1 : 0.94)
         .animation(.spring(response: 0.28, dampingFraction: 0.7), value: canSend)

@@ -1,7 +1,8 @@
 import SwiftUI
 
 // MARK: - 玻璃设计系统
-// iOS 26+：真 Liquid Glass（glassEffect / .glass 按钮样式）；
+// iOS 26+：真 Liquid Glass（glassEffect / GlassEffectContainer / materialize 过渡）；
+// 准则：interactive 只给可交互组件、玻璃不叠玻璃、多个玻璃元素入 container。
 // iOS 16~25：ultraThinMaterial + 发丝描边 + 柔影降级，观感一致。
 
 /// 品牌渐变（AccentColor #6366F1 → 紫罗兰）
@@ -17,34 +18,29 @@ enum GlassTokens {
 
 extension View {
 
-    /// 图标圆钮：iOS 26 玻璃按钮；以下材质圆底，任何版本都有「玻璃感」
+    /// 图标圆钮（独立悬浮，须在 GlassEffectContainer 内使用才能与邻近玻璃融合）：
+    /// iOS 26 用显式 glassEffect(interactive) 获得触摸流体反应并参与容器融合；
+    /// 以下版本材质圆底。调用方负责给 label 设定尺寸。
     @ViewBuilder
     func glassToolbarButton() -> some View {
         if #available(iOS 26.0, *) {
-            self.buttonStyle(.glass)
+            self
+                .buttonStyle(.plain)
+                .glassEffect(.regular.interactive(), in: Circle())
         } else {
             self
-                .frame(width: 34, height: 34)
+                .buttonStyle(.plain)
                 .background(.ultraThinMaterial, in: Circle())
                 .overlay(Circle().stroke(Color.primary.opacity(0.07), lineWidth: 0.5))
         }
     }
 
-    /// 强调色主操作钮
-    @ViewBuilder
-    func glassProminentButton() -> some View {
-        if #available(iOS 26.0, *) {
-            self.buttonStyle(.glassProminent)
-        } else {
-            self
-        }
-    }
-
-    /// 玻璃卡片（输入卡 / 面板）：iOS 26 真玻璃，以下材质+描边+柔影
+    /// 玻璃卡片（输入卡 / 面板等被动容器）：不加 interactive——
+    /// 官方规范 interactive 仅用于可交互组件；卡片内部也不得再嵌玻璃。
     @ViewBuilder
     func glassCard(cornerRadius: CGFloat, shadow: Bool = true) -> some View {
         if #available(iOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            self.glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         } else {
             self
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
@@ -66,17 +62,28 @@ extension View {
         }
     }
 
-    /// 玻璃圆面（FAB / hero 图标座）
+    /// 玻璃圆面（FAB 等可交互圆钮；装饰座传 interactive: false）
     @ViewBuilder
-    func glassCircle(size: CGFloat) -> some View {
+    func glassCircle(size: CGFloat, interactive: Bool = true) -> some View {
         if #available(iOS 26.0, *) {
             self.frame(width: size, height: size)
-                .glassEffect(.regular.interactive(), in: Circle())
+                .glassEffect(interactive ? Glass.regular.interactive() : .regular, in: Circle())
         } else {
             self.frame(width: size, height: size)
                 .background(.ultraThinMaterial, in: Circle())
                 .overlay(Circle().stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
                 .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
+        }
+    }
+
+    /// 玻璃元素的出现/消失过渡（materialize：远处出现时材质凝聚）。
+    /// 仅 iOS 26 生效；条件出现请配合 withAnimation/animation(value:)。
+    @ViewBuilder
+    func glassMaterialize() -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffectTransition(.materialize)
+        } else {
+            self
         }
     }
 }

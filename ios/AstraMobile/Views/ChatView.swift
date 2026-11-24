@@ -81,6 +81,7 @@ struct ChatView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.primary.opacity(0.7))
                 .glassCircle(size: 36)
+                .glassMaterialize()
         }
         .buttonStyle(.plain)
     }
@@ -154,7 +155,7 @@ struct ChatView: View {
                 .font(.system(size: 26, weight: .medium))
                 .foregroundStyle(GlassTokens.brandGradient)
                 .frame(width: 66, height: 66)
-                .glassCircle(size: 66)
+                .glassCircle(size: 66, interactive: false)
             Text("新的对话")
                 .font(.system(size: 26, weight: .bold, design: .rounded))
                 .foregroundStyle(GlassTokens.brandGradient)

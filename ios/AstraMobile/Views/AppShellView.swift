@@ -64,9 +64,28 @@ struct AppShellView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) { InputBar() }
     }
 
-    // MARK: - 悬浮玻璃顶栏：玻璃圆钮菜单 + 状态胶囊
+    // MARK: - 悬浮玻璃顶栏：玻璃圆钮菜单 + 状态胶囊（同一 GlassEffectContainer，可融合/互变）
 
     private var topBar: some View {
+        topBarRow
+            .padding(.horizontal, 14)
+            .padding(.top, 6)
+            .padding(.bottom, 4)
+    }
+
+    @ViewBuilder
+    private var topBarRow: some View {
+        if #available(iOS 26.0, *) {
+            // container spacing < HStack spacing：静止不融合，靠近/动画时才融合
+            GlassEffectContainer(spacing: 8) {
+                topBarContent
+            }
+        } else {
+            topBarContent
+        }
+    }
+
+    private var topBarContent: some View {
         HStack(spacing: 10) {
             Button {
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { drawerOpen = true }
@@ -94,9 +113,6 @@ struct AppShellView: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 6)
-        .padding(.bottom, 4)
     }
 
     private var connColor: Color {
@@ -218,11 +234,12 @@ struct DrawerView: View {
                         .font(.footnote)
                         .foregroundStyle(.tertiary)
                 }
+                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .glassCapsule()
+        .background(Color.primary.opacity(0.05), in: Capsule())
     }
 
     private func sessionRow(_ session: SessionMeta) -> some View {
