@@ -84,7 +84,7 @@ struct BridgeConfig: Equatable {
 /// 壳关心的事件子集（其余事件由 WebView 内的页面渲染）
 enum ShellEvent {
     case hello(sessions: [SessionMeta], queue: [QueueItem], config: BridgeConfig?,
-               current: String?, scope: String)
+               current: String?, live: [[String: Any]], scope: String)
     case view(String)
     case queue([QueueItem])
     case config(BridgeConfig)
@@ -101,6 +101,7 @@ enum ShellEvent {
                 queue: parseQueue(dict["queue"] as? [Any] ?? []),
                 config: (dict["config"] as? [String: Any]).map(BridgeConfig.parse),
                 current: dict["current"] as? String,
+                live: (dict["live"] as? [Any])?.compactMap { $0 as? [String: Any] } ?? [],
                 scope: dict["scope"] as? String ?? "all")
         case "view":
             return .view(dict["session_id"] as? String ?? "")

@@ -2,24 +2,25 @@ import Foundation
 import SwiftUI
 
 /// 壳的中心状态：连接、会话列表、队列、配置、当前会话与消息中心（MessageStore）。
-/// 与页面遵循同一套行为规则（跟进 PC view、新对话发送后收养、运行状态），见协议文档。
+/// 状态模型与 web 手机页（mobile_bridge_mobile.html）完全同构：
+/// - currentSessionId == nil 即「新对话」态（web 的 NEW）
+/// - pickedNew：用户主动新建后不再自动跟进 PC 的 view
+/// - pendingAdoptionText/At：从新对话发出的消息（剥过 /技能 前缀），60s 内文本精确匹配收养
+/// - 消息不做本地回显：PC 前端按下发送即广播 user_message，气泡由广播驱动；toast 由 PC 权威下发
 @MainActor
 final class ShellStore: ObservableObject {
     enum ConnState: Equatable {
         case connecting, connected, disconnected
     }
 
-    enum OpenTarget: Equatable {
-        case follow            // 默认态：跟随 PC 正在看的会话
-        case new               // 新对话（主动新建，不再自动跟进）
-        case session(String)   // 指定历史会话
-    }
-
     @Published private(set) var connState: ConnState = .connecting
     @Published private(set) var sessions: [SessionMeta] = []
     @Published private(set) var queue: [QueueItem] = []
     @Published private(set) var config: BridgeConfig?
-    @Published private(set) var openTarget: OpenTarget = .follow
+    /// 当前查看的会话 id；nil = 新对话（web 的 current/NEW）
+    @Published private(set) var currentSessionId: String?
+    /// 用户主动点过「新对话」：true 时不再自动跟进 PC 的 view
+    @Published private(set) var pickedNew = false
     @Published private(set) var scopedSessionId: String?   // scope=one 时锁定
     @Published private(set) var runningSessionIds: Set<String> = []
     @Published private(set) var toast: String?
@@ -45,10 +46,9 @@ final class ShellStore: ObservableObject {
     private var msgSeq = 0
     private var backoff: TimeInterval = 1
     private var reconnectTask: Task<Void, Never>?
-    private var lastNewSendText: String?
+    private var pendingAdoptionText: String?   // 新对话发出的消息文本（剥离后），收养匹配用
+    private var pendingAdoptionAt = Date.distantPast
     private var toastResetTask: Task<Void, Never>?
-    private var didInitialOpen = false   // 仅首次 hello 自动打开 PC 当前会话；重连不拽走用户视图
-    private(set) var pcCurrent: String?
 
     init(desktop: BoundDesktop, secret: String) {
         self.desktop = desktop
@@ -61,6 +61,11 @@ final class ShellStore: ObservableObject {
             guard let self, self.ttsEnabled else { return }
             self.tts.speak(text)
         }
+        // pending 回放时同步运行状态（web 回放路径的 trackRunning）
+        messages.onReplayEvent = { [weak self] env in
+            guard let self, let sid = env["session_id"] as? String else { return }
+            self.trackRunning(sid, env)
+        }
     }
 
     // MARK: - 派生状态
@@ -68,26 +73,14 @@ final class ShellStore: ObservableObject {
     var isScoped: Bool { scopedSessionId != nil }
     var isConnected: Bool { connState == .connected }
 
-    /// 顶栏/抽屉用的当前会话标题
+    /// 顶栏/抽屉用的当前会话标题（web sessionLabel 语义）
     var currentTitle: String {
-        switch openTarget {
-        case .session(let id):
-            return sessions.first { $0.id == id }?.title ?? "会话"
-        case .follow, .new:
-            if let pc = pcCurrent, let s = sessions.first(where: { $0.id == pc }) {
-                return s.title
-            }
-            return "新对话"
-        }
+        guard let sid = currentSessionId else { return "新对话" }
+        return sessions.first { $0.id == sid }?.title ?? "会话 " + String(sid.prefix(8))
     }
 
     var isRunningCurrent: Bool {
-        let sid: String?
-        switch openTarget {
-        case .session(let id): sid = id
-        case .follow, .new: sid = pcCurrent
-        }
-        guard let sid else { return false }
+        guard let sid = currentSessionId else { return false }
         return runningSessionIds.contains(sid)
     }
 
@@ -119,14 +112,32 @@ final class ShellStore: ObservableObject {
 
     // MARK: - 动作
 
-    /// 打开会话/新对话（MessageStore 负责拉历史或清空条目）
-    func openSession(_ target: OpenTarget) {
-        openTarget = target
-        messages.open(target: target)
+    /// 打开指定历史会话（web openSession：pickedNew=false，拉历史 + 回放缓冲）
+    func openSession(_ sid: String) {
+        pickedNew = false
+        currentSessionId = sid
+        messages.openSession(sid)
     }
 
-    /// 发送消息进 PC（新对话时 session_id 传 null，PC 自动建会话）。
-    /// PC 运行中时消息在 PC 侧自动进入队列（协议既定行为）
+    /// 主动新建（web openSession(NEW)：pickedNew=true，PC 的 view 不再跟进）
+    func openNew() {
+        pickedNew = true
+        currentSessionId = nil
+        messages.openNew()
+    }
+
+    /// web adoptSession：清除收养等待态 → 切 current → 拉历史回放缓冲
+    private func adoptSession(_ sid: String) {
+        pendingAdoptionAt = .distantPast
+        pendingAdoptionText = nil
+        pickedNew = false
+        currentSessionId = sid
+        messages.openSession(sid)
+    }
+
+    /// 发送消息进 PC（web doSend 语义：仅「新对话」发 session_id=null 由 PC 建会话，
+    /// 其余发当前会话 id）。PC 运行中时消息在 PC 侧自动进入队列（协议既定行为）；
+    /// 气泡与发送结果 toast 均由 PC 广播/下发，本地不回显
     @discardableResult
     func send(_ text: String) -> Bool {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -142,19 +153,30 @@ final class ShellStore: ObservableObject {
             "text": body,
             "sender": senderName,
         ]
-        switch openTarget {
-        case .session(let id): command["session_id"] = id
-        case .follow, .new: command["session_id"] = NSNull()
-        }
-        if case .new = openTarget { lastNewSendText = body }
+        command["session_id"] = currentSessionId ?? NSNull()
+        // 新对话发送：记录剥离后的文本供收养匹配（web sentAt/sentText，发送成功才记录）
+        let awaitingAdoption = currentSessionId == nil
+        let adoptionText = stripSkillPrefix(body)
         sendCommand(command) { [weak self] ok in
-            // 本地回显：不等 PC 广播，发送成功立即上屏（pending 态，广播到达后去重确认）
-            guard let self, ok else { return }
-            let sid: String?
-            if case .session(let id) = self.openTarget { sid = id } else { sid = nil }
-            self.messages.echoOutgoing(body, sender: self.senderName, targetSessionId: sid)
+            guard let self, ok, awaitingAdoption else { return }
+            self.pendingAdoptionAt = Date()
+            self.pendingAdoptionText = adoptionText
         }
         return true
+    }
+
+    /// 与 PC 同款正则剥掉 /技能 前缀（PC 广播的 user_message 文本是剥过的，
+    /// 收养必须用同款预剥离才能精确匹配）
+    private func stripSkillPrefix(_ text: String) -> String {
+        guard text.hasPrefix("/") else { return text }
+        let pattern = "^/[\\w\\u{4E00}-\\u{9FFF}.-]+(?:\\s+([\\s\\S]*))?$"
+        guard let re = try? NSRegularExpression(pattern: pattern),
+              let m = re.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))
+        else { return "" }
+        if m.numberOfRanges > 1, let r = Range(m.range(at: 1), in: text) {
+            return text[r].trimmingCharacters(in: .whitespaces)
+        }
+        return ""
     }
 
     /// 工具调用权限裁决（手机页 permission_decide 同款命令）
@@ -273,27 +295,31 @@ final class ShellStore: ObservableObject {
         }
     }
 
-    // MARK: - 事件处理（与页面 handleServer/trackRunning 同一套规则）
+    // MARK: - 事件处理（与 web 手机页 handleServer/onEnvelope 同一套规则）
 
     private func handleEvent(_ event: ShellEvent) {
         switch event {
-        case .hello(let sessions, let queue, let config, let current, let scope):
+        case .hello(let sessions, let queue, let config, let current, let live, let scope):
             self.sessions = sessions
             self.queue = queue
             self.config = config
-            pcCurrent = current
             scopedSessionId = scope == "one" ? current : nil
             connState = .connected
             backoff = 1
-            // 首次连接：停在默认态（follow）时自动打开 PC 当前会话（页面「收养」语义）
-            if !didInitialOpen {
-                didInitialOpen = true
-                if case .follow = openTarget, let sid = current {
-                    messages.openSession(sid)
-                }
+            // mid-run 加入：进行中 Run 的实时事件进 pending 缓冲，
+            // 打开/收养该会话时回放补看当前轮（磁盘历史缺当前轮）
+            for env in live {
+                guard let sid = env["session_id"] as? String, !sid.isEmpty else { continue }
+                trackRunning(sid, env)
             }
-            // 模拟器端到端测试钩子（仅 DEBUG）：连接后自动发送一条消息，
-            // 验证本地回显与 PC 广播去重
+            messages.bufferLive(live)
+            // PC 正在看某个会话而本机停在「新对话」：跟进收养（web 同款条件——
+            // 主动新建过或正在等收养时不劫持）
+            if let sid = current, currentSessionId == nil,
+               !pickedNew, pendingAdoptionText == nil {
+                adoptSession(sid)
+            }
+            // 模拟器端到端测试钩子（仅 DEBUG）：连接后自动发送一条消息
             #if DEBUG
             let args = ProcessInfo.processInfo.arguments
             if let i = args.firstIndex(of: "-mockAutoSend"), i + 1 < args.count {
@@ -305,11 +331,10 @@ final class ShellStore: ObservableObject {
             }
             #endif
         case .view(let sid):
-            // 与页面同一规则：仅停在默认态（follow）时收养 PC 切换的会话；
-            // 用户已显式选择（指定会话/新对话）时不拽走视图
-            pcCurrent = sid
-            if case .follow = openTarget {
-                messages.openSession(sid)
+            // PC 切换会话：仅跟进停在「新对话」且未主动新建、未等收养的手机
+            guard !sid.isEmpty else { return }
+            if currentSessionId == nil, !pickedNew, pendingAdoptionText == nil {
+                adoptSession(sid)
             }
         case .queue(let items):
             queue = items
@@ -327,26 +352,30 @@ final class ShellStore: ObservableObject {
         }
     }
 
+    /// web onEnvelope 语义：未初始化的会话先试收养（新对话发送的文本精确匹配），
+    /// 事件一律进缓冲；已初始化的交给消息中心按 current/缓存路由
     private func handleEnvelope(_ env: [String: Any]) {
-        let sid = env["session_id"] as? String
-        // 全量喂给消息中心（历史/流式渲染的唯一来源）
+        guard let sid = env["session_id"] as? String, !sid.isEmpty else { return }
+        if !messages.isInitialized(sid),
+           env["type"] as? String == "user_message",
+           currentSessionId == nil,
+           let sent = pendingAdoptionText,
+           env["text"] as? String == sent,
+           Date().timeIntervalSince(pendingAdoptionAt) < 60 {
+            adoptSession(sid)
+        }
+        trackRunning(sid, env)
         messages.applyEnvelope(env)
-        // 壳侧只额外维护「正在执行」与收养
+    }
+
+    /// web trackRunning：流式/工具事件 → 会话运行中；run 结束 → 清除
+    private func trackRunning(_ sid: String, _ env: [String: Any]) {
         switch env["type"] as? String {
         case "message_delta", "thinking_delta", "tool_call_started",
              "tool_call_args_delta", "permission_requested", "status_changed":
-            if let sid { runningSessionIds.insert(sid) }
+            runningSessionIds.insert(sid)
         case "run_completed", "run_failed", "run_cancelled":
-            if let sid { runningSessionIds.remove(sid) }
-        case "user_message":
-            // 新对话发送后的收养：PC 广播的 user_message 与本机最近一次发送文本匹配。
-            // 此时消息中心还没该会话历史，envelope 已在其 pending 缓冲，切过去即回放
-            if case .new = openTarget, let sid,
-               let text = env["text"] as? String,
-               text == lastNewSendText {
-                lastNewSendText = nil
-                openSession(.session(sid))
-            }
+            runningSessionIds.remove(sid)
         default:
             break
         }

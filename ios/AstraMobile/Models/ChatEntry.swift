@@ -10,7 +10,6 @@ struct ChatEntry: Identifiable, Equatable {
     // user / assistant / thinking / error / notice
     var text: String = ""
     var sender: String? = nil          // user：多设备同码时的来源标记
-    var pending: Bool = false          // user：本地回显未确认（PC 广播 user_message 到达后清除）；历史条目恒为 false
     var images: [Data] = []            // user：base64 PNG
     var streaming: Bool = false        // assistant：流式中
     var done: Bool = true              // thinking：是否已结束
@@ -90,14 +89,13 @@ enum ChatEnvelope {
         let type = env["type"] as? String ?? ""
         switch type {
         case "user_message":
+            // 用户消息镜像：PC 前端按下发送（pushUser）即广播，不等 Run 准入；
+            // sender：多设备同码时标记来源。回放（历史+缓冲可能重叠）才向前扫描
+            // 同文本条目防重复；实时事件直接追加——连发两条相同文本是合法消息
             let text = env["text"] as? String ?? ""
             var e = ChatEntry(id: UUID(), kind: "user")
             e.text = text
             e.sender = env["sender"] as? String
-            // 本地回显确认：同文本 + 同发送者的 pending 条目视为同一条消息（ PC 按下
-            // 发送即镜像广播，手机端发送成功已先上屏回显），确认后清除 pending。
-            // 只匹配 sender，多设备同码发相同文本不会误伤
-            if confirmEcho(e, in: &list) { return }
             if replay {
                 for i in stride(from: list.count - 1, through: 0, by: -1) {
                     if list[i].kind == "user" {
@@ -214,20 +212,6 @@ enum ChatEnvelope {
         default:
             break
         }
-    }
-
-    /// 在列表中找最近的同文本同发送者 pending 回显条目，确认后返回 true
-    private static func confirmEcho(_ e: ChatEntry, in list: inout [ChatEntry]) -> Bool {
-        for i in stride(from: list.count - 1, through: 0, by: -1) {
-            guard list[i].kind == "user", list[i].pending,
-                  list[i].text == e.text else { continue }
-            if let echoSender = list[i].sender, let envSender = e.sender,
-               echoSender != envSender { continue }
-            list[i].pending = false
-            if e.sender != nil { list[i].sender = e.sender }
-            return true
-        }
-        return false
     }
 
     /// 收养问题事件（agent-question 广播；onQuestion 等价）

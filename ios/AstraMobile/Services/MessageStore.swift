@@ -2,8 +2,9 @@ import Foundation
 import SwiftUI
 
 /// 会话消息中心：HTTP 拉历史 + WS 实时事件增量维护条目流。
-/// 行为对齐桌面端手机页（openSession / applyEnvelope / pending 缓冲回放）：
-/// - 未加载完成的会话先缓冲事件，历史到达后以 replay=true 回放（user_message 去重）
+/// 与 web 手机页（entries/pending 两张表 + 回放）同构：
+/// - 未初始化（未打开过）的会话先缓冲事件，历史到达后以 replay=true 回放（user_message 去重）
+/// - 已初始化的非当前会话后台维护缓存，切回直接呈现
 /// - 流式 delta 合并 150ms 节流发布，避免每个 delta 触发整列表 diff
 @MainActor
 final class MessageStore: ObservableObject {
@@ -15,9 +16,9 @@ final class MessageStore: ObservableObject {
     private let baseURL: String
     private var secret: String
 
-    /// 各会话已加载条目（切会话时免重复拉取；「正在执行」的另一会话也在维护）
+    /// 各会话已初始化条目（实时事件后台维护；web 的 state.entries）
     private var loadedEntries: [String: [ChatEntry]] = [:]
-    /// 历史未到达前缓冲的事件载荷
+    /// 未初始化会话的事件缓冲（web 的 state.pending，打开/收养时回放）
     private var pending: [String: [[String: Any]]] = [:]
     /// 流式节流：工作副本 + 定时器
     private var working: [ChatEntry] = []
@@ -25,6 +26,8 @@ final class MessageStore: ObservableObject {
     private var loadGeneration = 0  // 防过期响应覆盖（快速切会话）
     /// 当前会话 run 完成时最后一条 assistant 的完整文本（供 TTS 朗读；历史回放不触发）
     var onAssistantFinished: ((String) -> Void)?
+    /// pending 回放事件外送（壳侧 trackRunning，web 回放路径同款）
+    var onReplayEvent: (([String: Any]) -> Void)?
 
     init(baseURL: String, secret: String) {
         self.baseURL = baseURL
@@ -36,27 +39,23 @@ final class MessageStore: ObservableObject {
         secret = newSecret
     }
 
-    // MARK: - 打开会话
-
-    func open(target: ShellStore.OpenTarget) {
-        switch target {
-        case .new:
-            setCurrent(sessionId: nil, entries: [])
-        case .session(let sid):
-            openSession(sid)
-        case .follow:
-            break  // 由 ShellStore 在 hello/view 时以具体会话调 openSession
-        }
+    /// 会话是否已初始化（打开过/收养过；web 的 state.entries[sid] 是否存在）
+    func isInitialized(_ sid: String) -> Bool {
+        loadedEntries[sid] != nil
     }
 
+    // MARK: - 打开会话
+
+    /// 主动新建（web openSession(NEW)：清空条目，事件继续按会话缓冲）
+    func openNew() {
+        setCurrent(sessionId: nil, entries: [])
+    }
+
+    /// 打开会话（web openSession：拉历史 → entries[sid] → 回放 pending）
     func openSession(_ sid: String) {
         guard sid != currentSessionId else { return }
         loadGeneration += 1
         let gen = loadGeneration
-        if let cached = loadedEntries[sid] {
-            setCurrent(sessionId: sid, entries: cached)
-            return
-        }
         loading = true
         loadFailed = false
         entries = []
@@ -76,12 +75,21 @@ final class MessageStore: ObservableObject {
         }
     }
 
-    private func setCurrent(sessionId: String?, entries: [ChatEntry]) {
+    /// hello 的 live 事件：仅未初始化的会话进缓冲（web 同款：已初始化的靠实时路径维护）
+    func bufferLive(_ envelopes: [[String: Any]]) {
+        for env in envelopes {
+            guard let sid = env["session_id"] as? String, !sid.isEmpty else { continue }
+            guard loadedEntries[sid] == nil else { continue }
+            pending[sid, default: []].append(env)
+        }
+    }
+
+    private func setCurrent(sessionId: String?, entries newEntries: [ChatEntry]) {
         flushTimer?.invalidate()
         flushTimer = nil
         currentSessionId = sessionId
-        working = entries
-        self.entries = entries
+        working = newEntries
+        self.entries = newEntries
         loading = false
         // 回放缓冲事件（历史与实时缓冲可能重叠：user_message 需去重）
         if let sid = sessionId, let buffered = pending.removeValue(forKey: sid) {
@@ -90,6 +98,7 @@ final class MessageStore: ObservableObject {
                    let entry = ChatEnvelope.question(from: q) {
                     working.append(entry)
                 } else {
+                    onReplayEvent?(item)
                     ChatEnvelope.apply(item, to: &working, replay: true)
                 }
             }
@@ -99,14 +108,16 @@ final class MessageStore: ObservableObject {
 
     // MARK: - 实时事件
 
-    /// agent-event 载荷（含 user_message / delta / tool / permission / run 结束等）
+    /// agent-event 载荷（含 user_message / delta / tool / permission / run 结束等）。
+    /// 路由规则 = web onEnvelope/applyEnvelope：当前会话直接应用；loading 中缓冲；
+    /// 其他已初始化会话后台维护缓存；未初始化会话进 pending
     func applyEnvelope(_ env: [String: Any]) {
         guard let sid = env["session_id"] as? String else { return }
         guard sid == currentSessionId, !loading else {
             if loading || loadedEntries[sid] == nil {
                 pending[sid, default: []].append(env)
             } else if var cached = loadedEntries[sid] {
-                // 非当前会话但已加载：后台维护缓存，切回时直接呈现
+                // 非当前会话但已初始化：后台维护缓存，切回时直接呈现
                 ChatEnvelope.apply(env, to: &cached, replay: false)
                 loadedEntries[sid] = cached
             }
@@ -178,25 +189,6 @@ final class MessageStore: ObservableObject {
     }
 
     // MARK: - 本地动作回显
-
-    /// 发送成功后的本地回显：立即上屏并标 pending，PC 广播 user_message 时确认去重。
-    /// targetSessionId 传 nil（follow/新对话）时上屏到当前视图；指定会话且非当前视图时只维护缓存
-    func echoOutgoing(_ text: String, sender: String, targetSessionId: String?) {
-        var e = ChatEntry(id: UUID(), kind: "user")
-        e.text = text
-        e.sender = sender
-        e.pending = true
-        if targetSessionId == nil || targetSessionId == currentSessionId {
-            working.append(e)
-            publishNow()
-            if let sid = currentSessionId { loadedEntries[sid] = working }
-            return
-        }
-        if var cached = loadedEntries[targetSessionId!] {
-            cached.append(e)
-            loadedEntries[targetSessionId!] = cached
-        }
-    }
 
     func markQuestionAnswered(questionId: String, answer: String?, declined: Bool) {
         ChatEnvelope.markAnswered(questionId: questionId, answer: answer, declined: declined, in: &working)

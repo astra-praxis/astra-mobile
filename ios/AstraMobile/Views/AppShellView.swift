@@ -170,7 +170,7 @@ struct AppShellView: View {
             ttsButton
 
             Button {
-                store.openSession(.new)
+                store.openNew()
             } label: {
                 Image(systemName: "plus.bubble")
                     .font(.system(size: 14, weight: .medium))
@@ -454,7 +454,7 @@ struct DrawerView: View {
     private func sessionRow(_ session: SessionMeta) -> some View {
         let isCurrent = session.id == currentSessionIdForMark
         return Button {
-            store.openSession(.session(session.id))
+            store.openSession(session.id)
             close()
         } label: {
             HStack(spacing: 10) {
@@ -499,8 +499,7 @@ struct DrawerView: View {
     }
 
     private var currentSessionIdForMark: String? {
-        if case .session(let id) = store.openTarget { return id }
-        return store.pcCurrent
+        store.currentSessionId
     }
 
     private func close() {

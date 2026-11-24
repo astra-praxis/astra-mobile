@@ -271,7 +271,7 @@ struct InputBar: View {
     private var hintText: String {
         if store.connState == .disconnected { return "未连接，消息无法发送" }
         if store.isScoped { return "绑定会话模式：消息直接进入该会话" }
-        if case .new = store.openTarget { return "新对话：发送后 PC 自动建立会话" }
+        if store.currentSessionId == nil { return "新对话：发送后 PC 自动建立会话" }
         return voiceMode ? "按住说话松手即发送 · 运行中自动排队" : "回车快速发送 · 运行中自动排队"
     }
 
