@@ -33,6 +33,16 @@ final class ShellStore: ObservableObject {
     @Published var ttsEnabled: Bool {
         didSet { UserDefaults.standard.set(ttsEnabled, forKey: "ttsEnabled.v1") }
     }
+    /// 朗读音色（内置四款，全部普通话）：TTSReader.Voice.rawValue，
+    /// 变更即写入存储并同步给朗读器（下次 speak 生效）
+    @Published var ttsVoice: String {
+        didSet {
+            UserDefaults.standard.set(ttsVoice, forKey: "ttsVoice.v1")
+            if let voice = TTSReader.Voice(rawValue: ttsVoice) {
+                tts.selected = voice
+            }
+        }
+    }
 
     /// 朗读器（顶栏开关控制；朗读中点按可停止本次）
     let tts = TTSReader()
@@ -65,6 +75,9 @@ final class ShellStore: ObservableObject {
         }
         senderName = UserDefaults.standard.string(forKey: "senderName.v1") ?? "iPhone"
         ttsEnabled = UserDefaults.standard.bool(forKey: "ttsEnabled.v1")
+        let savedVoice = UserDefaults.standard.string(forKey: "ttsVoice.v1")
+            ?? TTSReader.Voice.first.rawValue
+        ttsVoice = savedVoice
         let baseURL = "\(desktop.scheme)://\(desktop.host):\(desktop.port)"
         self.messages = MessageStore(baseURL: baseURL, secret: secret)
         messages.onAssistantFinished = { [weak self] text in
@@ -76,6 +89,8 @@ final class ShellStore: ObservableObject {
             guard let self, let sid = env["session_id"] as? String else { return }
             self.trackRunning(sid, env)
         }
+        // 存储属性全部初始化后才能碰 self：把持久化的音色同步给朗读器
+        tts.selected = TTSReader.Voice(rawValue: savedVoice) ?? .first
     }
 
     // MARK: - 派生状态

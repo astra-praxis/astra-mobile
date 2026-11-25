@@ -31,6 +31,26 @@ struct UserSheet: View {
                 }
 
                 Section {
+                    Picker("朗读音色", selection: $store.ttsVoice) {
+                        ForEach(TTSReader.Voice.allCases) { voice in
+                            Text(voice.label).tag(voice.rawValue)
+                        }
+                    }
+                    Text("本机实际使用：\(resolvedVoiceName)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        store.tts.speak("你好，这是当前朗读音色的试听。切换音色后再听一次，就能听出区别。")
+                    } label: {
+                        Label("试听当前音色", systemImage: "speaker.wave.2")
+                    }
+                } header: {
+                    Text("朗读")
+                } footer: {
+                    Text("四款均为普通话，按本机已安装声音排列。想多几款：系统设置 › 辅助功能 › 朗读内容 › 声音 下载后回到这里即可选到。开启顶栏朗读开关后，agent 回复完成时自动朗读。")
+                }
+
+                Section {
                     Button {
                         appState.showScanner = true
                     } label: {
@@ -54,6 +74,13 @@ struct UserSheet: View {
                 Text("将删除本机保存的设备密钥；桌面端密钥不受影响，可重新扫码绑定。")
             }
         }
+    }
+
+    private var resolvedVoiceName: String {
+        guard let voice = TTSReader.Voice(rawValue: store.ttsVoice)?.resolve() else {
+            return "默认"
+        }
+        return voice.name
     }
 
     private var fingerprint: String {

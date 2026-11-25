@@ -7,6 +7,56 @@ import AVFoundation
 final class TTSReader: NSObject, ObservableObject {
     @Published private(set) var speaking = false
 
+    /// 当前音色（ShellStore 设置驱动；speak 时解析为设备实际声音）
+    var selected: Voice = .first
+
+    /// 内置音色（四档，全部普通话）：按本机已安装的 zh-CN 声音动态取前四个
+    /// （默认声婷婷固定第一，其余按音质 premium > enhanced > default 排）。
+    /// 档位即声音：已安装声音不足四款时，多余档位回落第一档并在设置页标注
+    /// 「未安装」——已安装的档位之间切换必然换声音，不会静默同声
+    enum Voice: String, CaseIterable, Identifiable {
+        case first, second, third, fourth
+
+        var id: String { rawValue }
+
+        /// 本机 zh-CN 候选：默认声（婷婷）第一，其余音质高的在前、名称次序稳定
+        static func candidates() -> [AVSpeechSynthesisVoice] {
+            let zh = AVSpeechSynthesisVoice.speechVoices().filter { $0.language == "zh-CN" }
+            guard let def = AVSpeechSynthesisVoice(language: "zh-CN") else { return zh }
+            var rest = zh.filter { $0.identifier != def.identifier }
+            rest.sort {
+                let rank: (AVSpeechSynthesisVoice) -> Int = {
+                    switch $0.quality {
+                    case .premium: return 2
+                    case .enhanced: return 1
+                    default: return 0
+                    }
+                }
+                return rank($0) != rank($1) ? rank($0) > rank($1) : $0.name < $1.name
+            }
+            return [def] + rest
+        }
+
+        private var index: Int {
+            Self.allCases.firstIndex(of: self) ?? 0
+        }
+
+        /// 标签 = 本机实际声音名；未安装的档位如实标注
+        var label: String {
+            let all = Self.candidates()
+            guard index < all.count else {
+                return index == 0 ? "默认普通话" : "未安装（需下载）"
+            }
+            return all[index].name
+        }
+
+        /// 该档位对应的声音；超出已安装数量回落第一档
+        func resolve() -> AVSpeechSynthesisVoice? {
+            let all = Self.candidates()
+            return index < all.count ? all[index] : all.first
+        }
+    }
+
     private let synth = AVSpeechSynthesizer()
 
     override init() {
@@ -19,7 +69,9 @@ final class TTSReader: NSObject, ObservableObject {
         guard !text.isEmpty else { return }
         synth.stopSpeaking(at: .immediate)   // 新回复到来打断上一条
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "zh-CN")
+        if let voice = selected.resolve() {
+            utterance.voice = voice
+        }   // 解析失败不设 voice → 系统默认语言兑底
         utterance.rate = 0.52
         synth.speak(utterance)
     }
