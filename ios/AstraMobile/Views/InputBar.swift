@@ -42,19 +42,20 @@ struct InputBar: View {
             if voiceMode {
                 pressToTalk
             } else {
-                TextField("发送消息到 PC…", text: $text, axis: .vertical)
-                    .lineLimit(1...8)
+                TextField("发送消息到 PC…", text: $text)
+                    .submitLabel(.send)   // 单行：回车键变蓝色「发送」，按下走 onSubmit
                     .padding(.horizontal, 10)
                     .padding(.top, 8)
-                    .frame(minHeight: 58, alignment: .topLeading)   // 空态也有两三行高度，文本顶对齐
+                    .frame(minHeight: 58, alignment: .topLeading)
                     .focused($focused)
                     .onSubmit(send)
-                    .onChange(of: text) { newValue in
-                        // 轴向 TextField 的回车是插换行、不触发 onSubmit：
-                        // 检测到末尾换行即视为键盘快速发送（拼音组合中的回车会先上屏，不会误发）
-                        guard newValue.hasSuffix("\n") else { return }
-                        text = String(newValue.dropLast())
-                        send()
+                    .contextMenu {
+                        // 追加进系统长按编辑菜单（拷贝/粘贴保留）：需要换行时从这里插
+                        Button {
+                            text += "\n"
+                        } label: {
+                            Label("插入换行", systemImage: "arrow.turn.down.left")
+                        }
                     }
             }
 
@@ -70,16 +71,21 @@ struct InputBar: View {
 
                 Spacer(minLength: 0)
 
+                // 右下角互斥单钮：有文字→发送；无文字→话筒（点击进语音模式）；
+                // 语音模式下常驻键盘钮（点击回文字模式）
                 if voiceMode {
                     modeSwitchButton(icon: "keyboard")
+                } else if canSend {
+                    sendButton
                 } else {
                     modeSwitchButton(icon: "mic")
-                    sendButton
                 }
             }
             .padding(.horizontal, 4)
             .padding(.top, 2)
             .padding(.bottom, 2)
+            .animation(.spring(response: 0.28, dampingFraction: 0.85), value: canSend)
+            .animation(.spring(response: 0.28, dampingFraction: 0.85), value: voiceMode)
         }
         .padding(8)
         .glassCard(cornerRadius: 26)
@@ -125,7 +131,7 @@ struct InputBar: View {
     // MARK: - 按住说话
 
     /// 语音模式输入区：按住录音、实时转写、松手发送、上滑取消
-    /// （内容定高、shape 只作 background，避免贪婪铺满整卡）
+    /// （无背景版：只用文字与录音红点表达状态，contentShape 保证整块可按）
     private var pressToTalk: some View {
         VStack(spacing: 5) {
             HStack(spacing: 6) {
@@ -149,11 +155,6 @@ struct InputBar: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, minHeight: 58)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(speech.recording
-                      ? (pressCancelling ? Color.red.opacity(0.16) : Color.red.opacity(0.10))
-                      : Color.primary.opacity(0.05)))
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .gesture(pressGesture)
     }

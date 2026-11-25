@@ -23,7 +23,7 @@ struct AppShellView: View {
 
                 ZStack(alignment: .leading) {
                     // 主屏与负一屏等速推移：开 = 整体右移一个屏宽的 85%，像两页纸推来推去
-                    mainContent
+                    mainContent(geo.safeAreaInsets)
                         .offset(x: panelWidth * drawerProgress)
 
                     // 左缘手势条：屏幕左缘右滑，负一屏跟手拉出
@@ -134,10 +134,53 @@ struct AppShellView: View {
             set: { if !$0 { closeDrawer() } })
     }
 
-    private var mainContent: some View {
+    private func mainContent(_ insets: EdgeInsets) -> some View {
         ChatView()
             .safeAreaInset(edge: .top, spacing: 0) { topBar }
+            // 虚化垫层夹在中间：消息流从它底下滚过，顶栏/输入卡/提示语压在它上面
+            .overlay { safeAreaVeil(insets) }
             .safeAreaInset(edge: .bottom, spacing: 0) { InputBar() }
+    }
+
+    // MARK: - 安全区虚化垫层
+
+    /// 精确盖住顶/底设备安全区（状态栏、Home 指示条）的磨砂条带：
+    /// 滚动内容穿过时被虚化，浮动玻璃卡不受影响（垫层不与其重叠）。
+    /// 底带额外上探 bottomExtra（约到输入卡中部），虚化垫在输入卡后面。
+    /// 内缘 28% 高度渐变软化，避免材质与内容之间出现硬切边；
+    /// 不拦截手势，负一屏打开时状态栏区同样保持磨砂。
+    private static let bottomExtra: CGFloat = 56
+    /// 垫层整体透明度：磨砂里微微透出原色，避免条带看起来像一块灰板
+    private static let veilOpacity: Double = 0.95
+
+    private func safeAreaVeil(_ insets: EdgeInsets) -> some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .opacity(Self.veilOpacity)
+                .frame(height: max(0, insets.top))
+                .mask(alignment: .top) {
+                    LinearGradient(stops: [
+                        .init(color: .black, location: 0),
+                        .init(color: .black, location: 0.72),
+                        .init(color: .clear, location: 1),
+                    ], startPoint: .top, endPoint: .bottom)
+                }
+            Spacer(minLength: 0)
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .opacity(Self.veilOpacity)
+                .frame(height: max(0, insets.bottom) + Self.bottomExtra)
+                .mask(alignment: .bottom) {
+                    LinearGradient(stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .black, location: 0.28),
+                        .init(color: .black, location: 1),
+                    ], startPoint: .top, endPoint: .bottom)
+                }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 
     // MARK: - 悬浮玻璃顶栏：玻璃圆钮菜单 + 状态胶囊（同一 GlassEffectContainer，可融合/互变）

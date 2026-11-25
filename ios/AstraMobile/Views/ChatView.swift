@@ -1,5 +1,11 @@
 import SwiftUI
 
+/// 点击消息区空白收起键盘：resign 第一响应者（无焦点时是无操作，不影响滚动与链接点击）
+private func hideKeyboard() {
+    UIApplication.shared.sendAction(
+        #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+}
+
 /// 原生消息流：全屏 ScrollView（内容从顶栏/输入条底下滚过）。
 /// 设计点：首现弹性入场、接近底部才自动跟随、玻璃回底 FAB、hero 空状态。
 struct ChatView: View {
@@ -30,6 +36,7 @@ struct ChatView: View {
             }
         }
         .coordinateSpace(name: "chatSpace")
+        .onTapGesture { hideKeyboard() }
         .onAppear { viewportHeight = viewport.size.height }
         .onChange(of: viewport.size.height) { viewportHeight = $0 }
         .onPreferenceChange(ContentBottomKey.self) { bottomY in
