@@ -8,6 +8,7 @@ import SwiftUI
 struct AppShellView: View {
     @EnvironmentObject var store: ShellStore
     @EnvironmentObject var appState: AppState
+    @Environment(\.scenePhase) private var scenePhase
 
     /// 负一屏进度 0(关)→1(开)：拖动中逐帧跟手，松手后弹簧落到端点
     @State private var drawerProgress: CGFloat = 0
@@ -76,6 +77,11 @@ struct AppShellView: View {
             #endif
         }
         .onDisappear { store.stop() }
+        .onChange(of: scenePhase) { phase in
+            // 息屏/切走后回来：socket 可能被 iOS 挂起掐成半开且不报错，
+            // 主动探活/重连（ShellStore.appDidBecomeActive）
+            if phase == .active { store.appDidBecomeActive() }
+        }
     }
 
     // MARK: - 抽屉手势与开合

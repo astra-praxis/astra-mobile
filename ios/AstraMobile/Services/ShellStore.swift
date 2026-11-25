@@ -117,6 +117,28 @@ final class ShellStore: ObservableObject {
         connect()
     }
 
+    /// 回前台（息屏恢复/切回 App）主动探活：iOS 挂起把 socket 掐掉后常半开
+    /// （无 RST，receive 不报错），壳误以为还连着——息屏回来“连不上”的根因。
+    /// 已连接 → pong 探活，死了强制重连；未连接 → 清退避立即重连
+    func appDidBecomeActive() {
+        switch connState {
+        case .disconnected:
+            reconnectTask?.cancel()
+            reconnectTask = nil
+            backoff = 1
+            connect()
+        case .connected:
+            ws?.ping(timeout: 3) { [weak self] alive in
+                guard let self, !alive else { return }
+                astraLog("回前台探活失败 → 强制重连")
+                self.backoff = 1
+                self.ws?.forceDisconnect()  // → onStateChange(false) → 1s 后重连
+            }
+        case .connecting:
+            break // 在途连接让它自己走完
+        }
+    }
+
     func stop() {
         reconnectTask?.cancel()
         reconnectTask = nil

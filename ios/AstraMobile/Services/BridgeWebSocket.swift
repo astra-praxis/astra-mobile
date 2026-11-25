@@ -57,6 +57,37 @@ final class BridgeWebSocket: NSObject {
         task = nil
     }
 
+    /// 单次带超时的探活：true=pong 正常回来（回前台探活 / 心跳共用）。
+    /// 挂起后的半开 socket：ping 发得进去但 pong 永远不来，必须靠超时判死
+    func ping(timeout: TimeInterval, completion: @escaping (Bool) -> Void) {
+        guard let task, !closed else {
+            DispatchQueue.main.async { completion(false) }
+            return
+        }
+        let probe = PingProbe()
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+            probe.finish(alive: false, completion: completion)
+        }
+        task.sendPing(pongReceiveHandler: { error in
+            probe.finish(alive: error == nil, completion: completion)
+        })
+    }
+
+    /// 主动判死并通知重连链路。close() 是静默拆除（closed 置位后不再回调），
+    /// 需要触发 onStateChange(false) → 重连时用这个
+    func forceDisconnect() {
+        closed = true
+        pingTimer?.cancel()
+        pingTimer = nil
+        DispatchQueue.main.async { [weak self] in
+            self?.onStateChange?(false)
+        }
+        task?.cancel(with: .goingAway, reason: nil)
+        session?.invalidateAndCancel()
+        session = nil
+        task = nil
+    }
+
     func send(json: [String: Any], completion: @escaping (Bool) -> Void) {
         guard let data = try? JSONSerialization.data(withJSONObject: json),
               let text = String(data: data, encoding: .utf8) else {
@@ -125,16 +156,34 @@ final class BridgeWebSocket: NSObject {
         }
     }
 
-    /// 与页面同一节奏的应用层心跳（20 秒）
+    /// 与页面同一节奏的应用层心跳（20 秒）。pong 出错或超时即判死 → 通知重连。
+    /// 息屏挂起后 socket 常半开（无 RST，receive 不报错），此前 pong 回调
+    /// 直接忽略错误且无超时，永远发现不了——息屏回来“连不上”的根因
     private func startPing() {
         let timer = DispatchSource.makeTimerSource(queue: .global())
         timer.schedule(deadline: .now() + 20, repeating: 20)
         timer.setEventHandler { [weak self] in
             guard let self, !self.closed else { return }
-            self.task?.sendPing(pongReceiveHandler: { _ in })
+            self.ping(timeout: 5) { [weak self] alive in
+                if !alive { self?.notifyDisconnected() }
+            }
         }
         timer.resume()
         pingTimer = timer
+    }
+}
+
+/// 探活一次性守卫：pong 回调与超时看门狗谁先到谁生效，双到不重复
+private final class PingProbe {
+    private let lock = NSLock()
+    private var done = false
+    func finish(alive: Bool, completion: @escaping (Bool) -> Void) {
+        lock.lock()
+        let first = !done
+        done = true
+        lock.unlock()
+        guard first else { return }
+        DispatchQueue.main.async { completion(alive) }
     }
 }
 
