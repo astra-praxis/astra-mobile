@@ -43,6 +43,9 @@ final class ShellStore: ObservableObject {
     let desktop: BoundDesktop
     private var secret: String
     private var ws: BridgeWebSocket?
+    /// msg_id 设备内唯一前缀（持久化）：PC 端去重器按 msg_id 原值判重且 LRU 不随时间清空，
+    /// 纯递增序号重启后从 1 重来，会撞上 web 手机页发过的 id 被静默丢弃
+    private let msgClientId: String
     private var msgSeq = 0
     private var backoff: TimeInterval = 1
     private var reconnectTask: Task<Void, Never>?
@@ -53,6 +56,13 @@ final class ShellStore: ObservableObject {
     init(desktop: BoundDesktop, secret: String) {
         self.desktop = desktop
         self.secret = secret
+        if let saved = UserDefaults.standard.string(forKey: "msgClientId.v1") {
+            msgClientId = saved
+        } else {
+            let fresh = UUID().uuidString
+            UserDefaults.standard.set(fresh, forKey: "msgClientId.v1")
+            msgClientId = fresh
+        }
         senderName = UserDefaults.standard.string(forKey: "senderName.v1") ?? "iPhone"
         ttsEnabled = UserDefaults.standard.bool(forKey: "ttsEnabled.v1")
         let baseURL = "\(desktop.scheme)://\(desktop.host):\(desktop.port)"
@@ -154,7 +164,7 @@ final class ShellStore: ObservableObject {
         msgSeq += 1
         var command: [String: Any] = [
             "type": "send",
-            "msg_id": msgSeq,
+            "msg_id": "\(msgClientId)-\(msgSeq)",
             "text": body,
             "sender": senderName,
         ]
