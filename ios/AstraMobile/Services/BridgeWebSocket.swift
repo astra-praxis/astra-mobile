@@ -35,6 +35,9 @@ final class BridgeWebSocket: NSObject {
         astraLog("ws", "connect →", url.host ?? "?", "port", port, "ticket.len", ticket.count)
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
+        // 桥是局域网直连，绕过系统/WiFi 的 HTTP 代理（真机实证：全局代理会把
+        // 局域网请求也送进代理，代理一挂桥就 -1004 Host is down）
+        config.connectionProxyDictionary = [:]
         let s = URLSession(configuration: config, delegate: self, delegateQueue: nil)
         session = s
         let t = s.webSocketTask(with: url)

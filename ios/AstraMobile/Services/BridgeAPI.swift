@@ -19,6 +19,16 @@ enum BridgeError: LocalizedError {
 
 /// 桥的 HTTP API（壳侧只用两个：换票、会话列表；对话内容全在 WebView 页面里）
 enum BridgeAPI {
+    /// 桥是局域网直连，不走系统/WiFi 的 HTTP 代理：
+    /// 空的 connectionProxyDictionary = 显式直连，避免代理挂了连带桥连不上
+    /// （真机日志实证：WiFi 全局代理下 /api/ticket 被 172.x:7890 代理拉挂，-1004 Host is down）
+    static let session: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.connectionProxyDictionary = [:]
+        config.timeoutIntervalForRequest = 15
+        return URLSession(configuration: config)
+    }()
+
     /// 401/429 响应体携带服务端原因：PC 端 (status, message).into_response() 是纯文本，
     /// 兼容尝试 JSON {"message": ...}，失败则取纯文本；都拿不到再退回通用文案
     private static func rejectError(_ data: Data?, fallback: BridgeError) -> BridgeError {
@@ -38,7 +48,7 @@ enum BridgeAPI {
         var request = URLRequest(url: URL(string: base + "/api/ticket")!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw rejectError(data, fallback: .auth)
         }
@@ -53,7 +63,7 @@ enum BridgeAPI {
     static func sessions(base: String, secret: String) async throws -> [SessionMeta] {
         var request = URLRequest(url: URL(string: base + "/api/sessions")!)
         request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw rejectError(data, fallback: .auth)
         }
@@ -68,7 +78,7 @@ enum BridgeAPI {
         var request = URLRequest(
             url: URL(string: base + "/api/session/" + id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)!)!)
         request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw BridgeError.auth }
         guard http.statusCode == 200 else {
             if http.statusCode == 403 { throw BridgeError.forbidden }
