@@ -128,6 +128,7 @@ final class ShellStore: ObservableObject {
 
     /// web adoptSession：清除收养等待态 → 切 current → 拉历史回放缓冲
     private func adoptSession(_ sid: String) {
+        astraLog("adoptSession →", String(sid.prefix(8)))
         pendingAdoptionAt = .distantPast
         pendingAdoptionText = nil
         pickedNew = false
@@ -143,9 +144,13 @@ final class ShellStore: ObservableObject {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return false }
         guard isConnected, let ws else {
+            astraLog("send ✗ 未连接 state:", connState, "ws:", ws != nil)
             showToast("未连接到 PC，请稍候重试")
             return false
         }
+        astraLog("send current:", currentSessionId ?? "nil(新对话)",
+                 "pickedNew:", pickedNew, "awaitingAdoption:", pendingAdoptionText != nil,
+                 "text:", body)
         msgSeq += 1
         var command: [String: Any] = [
             "type": "send",
@@ -239,15 +244,18 @@ final class ShellStore: ObservableObject {
         Task {
             do {
                 let ticket = try await BridgeAPI.ticket(base: baseURL, secret: secret)
+                astraLog("connect ✓ ticket.len", ticket.count, "base:", baseURL)
                 ws?.close()  // 换新连接前先收掉旧的
                 let socket = BridgeWebSocket(scheme: desktop.scheme, host: desktop.host, port: desktop.port)
                 socket.onEvent = { [weak self] event in self?.handleEvent(event) }
                 socket.onStateChange = { [weak self] open in
+                    astraLog("connect onStateChange:", open)
                     if !open { self?.handleDisconnected() }
                 }
                 ws = socket
                 socket.connect(ticket: ticket)
             } catch {
+                astraLog("connect ✗ ticket 失败:", error.localizedDescription)
                 showToast("连接失败：\(error.localizedDescription)")
                 scheduleReconnect()
             }
@@ -273,6 +281,7 @@ final class ShellStore: ObservableObject {
 
     private func sendCommand(_ command: [String: Any], onSent: ((Bool) -> Void)? = nil) {
         guard isConnected, let ws else {
+            astraLog("sendCommand ✗ 未连接 type:", command["type"] as? String ?? "?")
             showToast("未连接到 PC，请稍候重试")
             onSent?(false)
             return
@@ -286,6 +295,7 @@ final class ShellStore: ObservableObject {
     }
 
     private func showToast(_ text: String) {
+        astraLog("toast:", text)
         toast = text
         toastResetTask?.cancel()
         toastResetTask = Task { [weak self] in
@@ -300,6 +310,10 @@ final class ShellStore: ObservableObject {
     private func handleEvent(_ event: ShellEvent) {
         switch event {
         case .hello(let sessions, let queue, let config, let current, let live, let scope):
+            astraLog("hello ✓ sessions:", sessions.count, "queue:", queue.count,
+                     "current:", current ?? "nil", "live:", live.count, "scope:", scope,
+                     "| 本机 current:", currentSessionId ?? "nil",
+                     "pickedNew:", pickedNew, "awaitingAdoption:", pendingAdoptionText != nil)
             self.sessions = sessions
             self.queue = queue
             self.config = config
@@ -332,6 +346,8 @@ final class ShellStore: ObservableObject {
             #endif
         case .view(let sid):
             // PC 切换会话：仅跟进停在「新对话」且未主动新建、未等收养的手机
+            astraLog("view:", sid, "| 本机 current:", currentSessionId ?? "nil",
+                     "pickedNew:", pickedNew, "awaitingAdoption:", pendingAdoptionText != nil)
             guard !sid.isEmpty else { return }
             if currentSessionId == nil, !pickedNew, pendingAdoptionText == nil {
                 adoptSession(sid)
@@ -354,8 +370,19 @@ final class ShellStore: ObservableObject {
 
     /// web onEnvelope 语义：未初始化的会话先试收养（新对话发送的文本精确匹配），
     /// 事件一律进缓冲；已初始化的交给消息中心按 current/缓存路由
+    private var envelopeDeltaCount = 0
+
     private func handleEnvelope(_ env: [String: Any]) {
         guard let sid = env["session_id"] as? String, !sid.isEmpty else { return }
+        switch env["type"] as? String {
+        case "message_delta", "thinking_delta", "tool_call_args_delta":
+            envelopeDeltaCount += 1
+            if envelopeDeltaCount % 20 == 1 {
+                astraLog("envelope delta ×\(envelopeDeltaCount) sid:", String(sid.prefix(8)))
+            }
+        default:
+            astraLog("envelope:", env["type"] as? String ?? "?", "sid:", String(sid.prefix(8)))
+        }
         if !messages.isInitialized(sid),
            env["type"] as? String == "user_message",
            currentSessionId == nil,

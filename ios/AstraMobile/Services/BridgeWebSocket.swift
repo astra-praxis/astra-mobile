@@ -28,9 +28,11 @@ final class BridgeWebSocket: NSObject {
         closed = false
         let wsScheme = scheme == "https" ? "wss" : "ws"
         guard let url = URL(string: "\(wsScheme)://\(host):\(port)/api/ws?ticket=\(ticket)") else {
+            astraLog("ws", "URL 构造失败", wsScheme, host, port)
             DispatchQueue.main.async { self.onStateChange?(false) }
             return
         }
+        astraLog("ws", "connect →", url.host ?? "?", "port", port, "ticket.len", ticket.count)
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
         let s = URLSession(configuration: config, delegate: self, delegateQueue: nil)
@@ -55,10 +57,19 @@ final class BridgeWebSocket: NSObject {
     func send(json: [String: Any], completion: @escaping (Bool) -> Void) {
         guard let data = try? JSONSerialization.data(withJSONObject: json),
               let text = String(data: data, encoding: .utf8) else {
+            astraLog("ws send", "JSON 序列化失败")
             completion(false)
             return
         }
-        task?.send(.string(text)) { error in completion(error == nil) }
+        astraLog("ws send →", text)
+        task?.send(.string(text)) { error in
+            if let error {
+                astraLog("ws send ✗", error.localizedDescription)
+            } else {
+                astraLog("ws send ✓")
+            }
+            completion(error == nil)
+        }
     }
 
     // MARK: - 私有
@@ -88,8 +99,15 @@ final class BridgeWebSocket: NSObject {
     }
 
     private func dispatch(data: Data) {
-        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let event = ShellEvent.parse(obj) else { return }
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            astraLog("ws recv ✗ 非 JSON", String(data: data.prefix(200), encoding: .utf8) ?? "?")
+            return
+        }
+        let type = obj["type"] as? String ?? "?"
+        guard let event = ShellEvent.parse(obj) else {
+            astraLog("ws recv (parse nil) type:", type)
+            return
+        }
         DispatchQueue.main.async { [weak self] in
             self?.onEvent?(event)
         }
@@ -97,6 +115,7 @@ final class BridgeWebSocket: NSObject {
 
     private func notifyDisconnected() {
         guard !closed else { return }
+        astraLog("ws ✗ 断开（notifyDisconnected）")
         pingTimer?.cancel()
         DispatchQueue.main.async { [weak self] in
             self?.onStateChange?(false)
@@ -120,6 +139,7 @@ extension BridgeWebSocket: URLSessionWebSocketDelegate {
     func urlSession(_ session: URLSession,
                     webSocketTask: URLSessionWebSocketTask,
                     didOpenWithProtocol: String?) {
+        astraLog("ws ✓ open protocol:", didOpenWithProtocol ?? "nil")
         DispatchQueue.main.async { [weak self] in
             self?.onStateChange?(true)
         }
@@ -129,12 +149,17 @@ extension BridgeWebSocket: URLSessionWebSocketDelegate {
                     webSocketTask: URLSessionWebSocketTask,
                     didCloseWith closeCode: URLSessionWebSocketTask.CloseCode,
                     reason: Data?) {
+        let reasonText = reason.flatMap { String(data: $0, encoding: .utf8) } ?? "nil"
+        astraLog("ws close code:", closeCode.rawValue, "reason:", reasonText)
         notifyDisconnected()
     }
 
     func urlSession(_ session: URLSession,
                     task: URLSessionTask,
                     didCompleteWithError error: Error?) {
-        if error != nil { notifyDisconnected() }
+        if let error {
+            astraLog("ws complete(err)", (error as NSError).code, error.localizedDescription)
+            notifyDisconnected()
+        }
     }
 }
