@@ -190,7 +190,7 @@ final class ShellStore: ObservableObject {
     func send(_ text: String) -> Bool {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return false }
-        guard isConnected, let ws else {
+        guard isConnected, ws != nil else {
             astraLog("send ✗ 未连接 state:", connState, "ws:", ws != nil)
             showToast("未连接到 PC，请稍候重试")
             return false
@@ -288,7 +288,8 @@ final class ShellStore: ObservableObject {
 
     private func connect() {
         connState = .connecting
-        Task {
+        Task { [weak self] in
+            guard let self else { return }
             do {
                 let ticket = try await BridgeAPI.ticket(base: baseURL, secret: secret)
                 astraLog("connect ✓ ticket.len", ticket.count, "base:", baseURL)
