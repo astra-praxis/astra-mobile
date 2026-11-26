@@ -35,7 +35,7 @@ struct InputBar: View {
 
     @State private var pendingImages: [PendingImage] = []
     @State private var pendingFiles: [PendingFile] = []
-    @State private var showAttachMenu = false
+    @State private var showAttachTray = false
     @State private var showPhotoPicker = false
     @State private var showFileImporter = false
     @State private var showPCFiles = false
@@ -95,6 +95,12 @@ struct InputBar: View {
                     }
             }
 
+            // 加号展开的附件面板：内嵌在输入卡里，不是系统弹框
+            if showAttachTray {
+                attachTray
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
             HStack(spacing: 8) {
                 toolButton("square.stack.3d.up", badge: store.queue.isEmpty ? nil : "\(store.queue.count)") {
                     store.showQueue = true
@@ -108,9 +114,10 @@ struct InputBar: View {
                 Spacer(minLength: 0)
 
                 // 右下角互斥单钮：有文字→发送；无文字→话筒（点击进语音模式）；
-                // 语音模式下常驻键盘钮（点击回文字模式）。加号在话筒/发送左侧
-                toolButton("plus") {
-                    showAttachMenu = true
+                // 语音模式下常驻键盘钮（点击回文字模式）。加号在话筒/发送左侧，
+                // 点开是输入卡内的附件面板，再点收起（图标同步换成 ✕）
+                toolButton(showAttachTray ? "xmark" : "plus") {
+                    showAttachTray.toggle()
                 }
                 .disabled(speech.recording)
 
@@ -132,12 +139,7 @@ struct InputBar: View {
         .glassCard(cornerRadius: 26)
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: store.isRunningCurrent)
         .animation(.spring(response: 0.28, dampingFraction: 0.85), value: voiceMode)
-        .confirmationDialog("添加附件", isPresented: $showAttachMenu, titleVisibility: .visible) {
-            Button("照片图库") { showPhotoPicker = true }
-            Button("文件") { showFileImporter = true }
-            Button("浏览 PC 项目文件") { showPCFiles = true }
-            Button("取消", role: .cancel) {}
-        }
+        .animation(.spring(response: 0.28, dampingFraction: 0.85), value: showAttachTray)
         .photosPicker(isPresented: $showPhotoPicker, selection: $pickerItems,
                       maxSelectionCount: 4, matching: .images)
         .onChange(of: pickerItems) { items in
@@ -176,6 +178,47 @@ struct InputBar: View {
                 }
             }
         }
+    }
+
+    // MARK: - 附件面板（加号内嵌展开，替代系统弹框）
+
+    private var attachTray: some View {
+        HStack(spacing: 10) {
+            trayButton(icon: "photo", label: "图片") {
+                showAttachTray = false
+                showPhotoPicker = true
+            }
+            trayButton(icon: "folder", label: "文件") {
+                showAttachTray = false
+                showFileImporter = true
+            }
+            trayButton(icon: "laptop.and.iphone", label: "PC 文件") {
+                showAttachTray = false
+                showPCFiles = true
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 6)
+        .padding(.top, 8)
+        .padding(.bottom, 2)
+    }
+
+    /// 面板选项钮：图标 + 文字，浅色圆角底与卡内工具钮同风格
+    private func trayButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: .medium))
+                Text(label)
+                    .font(.system(size: 11, design: .rounded))
+            }
+            .foregroundStyle(.primary.opacity(0.75))
+            .frame(width: 66, height: 52)
+            .background(Color.primary.opacity(0.05),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - 附件条（图片缩略图 + 文件 chip，可逐个删除）
@@ -400,6 +443,7 @@ struct InputBar: View {
     private func modeSwitchButton(icon: String) -> some View {
         Button {
             pressHint = ""
+            showAttachTray = false
             withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
                 voiceMode.toggle()
             }
@@ -478,6 +522,7 @@ struct InputBar: View {
             text = ""
             pendingImages = []
             pendingFiles = []
+            showAttachTray = false
             // 不收键盘：保留焦点方便连续快速发送
         }
     }
