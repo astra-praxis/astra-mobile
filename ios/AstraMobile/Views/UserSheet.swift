@@ -157,6 +157,7 @@ private struct WatchSection: View {
             }
             .pickerStyle(.menu)
             statusRow
+            Toggle("回复完成自动朗读", isOn: announceBinding)
             Button {
                 link.resync()
             } label: {
@@ -165,7 +166,7 @@ private struct WatchSection: View {
         } header: {
             Label("Apple Watch", systemImage: "applewatch")
         } footer: {
-            Text("手表发送固定到这个会话：空闲立即发送，运行中自动排队。模型偏好即桌面全局模型（手表端不选模型）。")
+            Text("手表发送固定到这个会话：空闲立即发送，运行中自动排队。模型偏好即桌面全局模型（手表端不选模型）。朗读由本机代劳，手表只控制重播/停止。")
         }
     }
 
@@ -193,6 +194,17 @@ private struct WatchSection: View {
                 if let newModel, store.config?.sourceType == "provider" {
                     store.setOverrideModel(newModel)
                 }
+            })
+    }
+
+    private var announceBinding: Binding<Bool> {
+        Binding(
+            get: { watchConfig.announce },
+            set: { newValue in
+                watchConfig.save(sessionId: watchConfig.sessionId,
+                                 title: watchConfig.sessionTitle,
+                                 model: watchConfig.model,
+                                 announce: newValue)
             })
     }
 

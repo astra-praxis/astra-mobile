@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: io.astra.mobile
   deploymentTarget:
     iOS: "16.0"
+    watchOS: "9.0"
   createIntermediateGroups: true
 settings:
   base:
@@ -13,9 +14,28 @@ settings:
     ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
 targets:
+  AstraWatch:
+    type: application
+    platform: watchOS
+    # 单 target watch app：bundle id 必须是 iOS app bundle id 的前缀延伸
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.astra.mobile.AstraMobile.watchkitapp
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    sources:
+      - path: AstraWatch
+    info:
+      path: AstraWatch/Info.plist
+      properties:
+        CFBundleDisplayName: Astra
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: io.astra.mobile.AstraMobile
+        WKWatchOnly: false
   AstraMobile:
     type: application
     platform: iOS
+    dependencies:
+      - target: AstraWatch
     sources:
       - path: AstraMobile
     info:

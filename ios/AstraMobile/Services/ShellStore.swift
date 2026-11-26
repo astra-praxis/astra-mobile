@@ -97,6 +97,11 @@ final class ShellStore: ObservableObject {
         }
         // 存储属性全部初始化后才能碰 self：把持久化的音色同步给朗读器
         tts.selected = TTSReader.Voice(rawValue: savedVoice) ?? .first
+        // 朗读状态变化 → 通知手表刷新播报控制条
+        tts.onSpeakingChange = { [weak self] speaking in
+            guard self != nil else { return }
+            WatchLink.shared.notifyTTSState(speaking)
+        }
         // 手表桥挂接：手表发来的消息落到本 store；store 释放时弱引用自动失效
         WatchLink.shared.attach(self)
     }

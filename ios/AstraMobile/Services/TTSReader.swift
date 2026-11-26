@@ -10,6 +10,9 @@ final class TTSReader: NSObject, ObservableObject {
     /// 当前音色（ShellStore 设置驱动；speak 时解析为设备实际声音）
     var selected: Voice = .first
 
+    /// 朗读状态变化回调（手表端播报控制条需要知道 iPhone 是否在朗读）
+    var onSpeakingChange: ((Bool) -> Void)?
+
     /// 内置音色（四档，全部普通话）：按本机已安装的 zh-CN 声音动态取前四个
     /// （默认声婷婷固定第一，其余按音质 premium > enhanced > default 排）。
     /// 档位即声音：已安装声音不足四款时，多余档位回落第一档并在设置页标注
@@ -107,14 +110,23 @@ final class TTSReader: NSObject, ObservableObject {
 
 extension TTSReader: AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.speaking = true }
+        Task { @MainActor in
+            self.speaking = true
+            self.onSpeakingChange?(true)
+        }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.speaking = false }
+        Task { @MainActor in
+            self.speaking = false
+            self.onSpeakingChange?(false)
+        }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.speaking = false }
+        Task { @MainActor in
+            self.speaking = false
+            self.onSpeakingChange?(false)
+        }
     }
 }

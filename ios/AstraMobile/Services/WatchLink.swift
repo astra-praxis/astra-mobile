@@ -21,6 +21,10 @@ final class WatchLink: NSObject, ObservableObject {
     private(set) var watchSessionId: String?
     private(set) var watchSessionTitle: String?
     private(set) var watchModel: String?
+    /// 专用会话回复完成时 iPhone 自动朗读（手表端「播报」由手机代劳）
+    private(set) var announceOn = true
+    /// 最近一条专用会话的完整回复（手表重播用）
+    private(set) var lastWatchReply: String?
 
     /// 手表端发来的消息回调（ShellStore attach 后设置）
     private weak var shell: ShellStore?
@@ -47,10 +51,11 @@ final class WatchLink: NSObject, ObservableObject {
     }
 
     /// 更新手表配置并同步（WatchConfigStore 每次 save 后调用）
-    func updateConfig(sessionId: String?, title: String?, model: String?) {
+    func updateConfig(sessionId: String?, title: String?, model: String?, announce: Bool? = nil) {
         watchSessionId = sessionId
         watchSessionTitle = title
         watchModel = model
+        if let announce { announceOn = announce }
         var context: [String: Any] = [
             "session_id": sessionId ?? "",
             "session_title": title ?? "",
@@ -125,10 +130,15 @@ final class WatchLink: NSObject, ObservableObject {
             replyBuffer = nil
             replyRunning = false
             if let reply, !reply.isEmpty {
+                lastWatchReply = reply
                 pendingContext["last_reply"] = reply
                 pendingContext["run_state"] = "idle"
                 pushContext()
                 sendToWatch(["type": "reply", "text": reply])
+                // 播报代劳：专用会话回复完成 → iPhone 朗读（手表只显示控制条）
+                if announceOn, shell?.tts.speak(reply) != nil {
+                    sendToWatch(["type": "tts_state", "speaking": true])
+                }
             } else {
                 sendToWatch(["type": "run_state", "running": false])
             }
@@ -160,9 +170,27 @@ final class WatchLink: NSObject, ObservableObject {
             var result: [String: Any] = ["type": "send_result", "ok": ok]
             if !ok { result["reason"] = "not_connected" }
             sendToWatch(result)
+        case "tts":
+            // 手表播报控制：重播 / 停止（朗读在 iPhone 上）
+            guard let shell else { return }
+            switch message["action"] as? String {
+            case "replay":
+                if let reply = lastWatchReply {
+                    shell.tts.speak(reply)
+                }
+            case "stop":
+                shell.tts.stop()
+            default:
+                break
+            }
         default:
             astraLog("watch 未知消息:", message["type"] as? String ?? "?")
         }
+    }
+
+    /// iPhone 朗读状态变化 → 通知手表刷新控制条
+    func notifyTTSState(_ speaking: Bool) {
+        sendToWatch(["type": "tts_state", "speaking": speaking])
     }
 }
 
