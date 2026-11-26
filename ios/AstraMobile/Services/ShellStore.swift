@@ -97,6 +97,8 @@ final class ShellStore: ObservableObject {
         }
         // 存储属性全部初始化后才能碰 self：把持久化的音色同步给朗读器
         tts.selected = TTSReader.Voice(rawValue: savedVoice) ?? .first
+        // 手表桥挂接：手表发来的消息落到本 store；store 释放时弱引用自动失效
+        WatchLink.shared.attach(self)
     }
 
     // MARK: - 派生状态
@@ -232,6 +234,28 @@ final class ShellStore: ObservableObject {
             self.pendingAdoptionText = adoptionText
             self.pendingAdoptionMsgId = adoptionMsgId
         }
+        return true
+    }
+
+    /// 手表专用发送：固定目标会话，不改本机当前视图、不收养。
+    /// PC 端会话空闲则直接起跑，运行中自动入该会话子队列（协议既定行为）。
+    @discardableResult
+    func sendToWatchSession(_ sid: String, text: String) -> Bool {
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return false }
+        guard isConnected, ws != nil else {
+            astraLog("watch send ✗ 未连接")
+            return false
+        }
+        msgSeq += 1
+        let command: [String: Any] = [
+            "type": "send",
+            "msg_id": "\(msgClientId)-\(msgSeq)",
+            "text": body,
+            "sender": senderName,
+            "session_id": sid,
+        ]
+        sendCommand(command)
         return true
     }
 
@@ -502,6 +526,8 @@ final class ShellStore: ObservableObject {
         }
         trackRunning(sid, env)
         messages.applyEnvelope(env)
+        // 专用会话的事件转发给手表（运行状态 + 最终回复）
+        WatchLink.shared.forwardEnvelope(env)
     }
 
     /// web trackRunning：流式/工具事件 → 会话运行中；run 结束 → 清除

@@ -4,8 +4,11 @@ import SwiftUI
 struct AstraMobileApp: App {
     @StateObject private var store = DesktopStore()
     @StateObject private var appState = AppState()
+    @StateObject private var watchConfig = WatchConfigStore()
 
     init() {
+        // 手表桥：尽早激活 WCSession（幂等），配置由 WatchConfigStore 初始化时推入
+        WatchLink.shared.activate()
         // 模拟器端到端测试钩子（仅 DEBUG）：launch 参数覆盖已绑定桌面的 Keychain 密钥，
         // 须在首帧求值前执行，否则 DesktopRoot 会拿旧 secret 建 ShellStore。
         // 用法：simctl launch <sim> <bundle> -mockBindSecret <secret>
@@ -25,6 +28,7 @@ struct AstraMobileApp: App {
             RootView()
                 .environmentObject(store)
                 .environmentObject(appState)
+                .environmentObject(watchConfig)
                 .onOpenURL { url in
                     DeepLink.handle(url, store: store)
                 }

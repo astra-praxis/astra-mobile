@@ -5,6 +5,7 @@ struct UserSheet: View {
     @EnvironmentObject var store: ShellStore
     @EnvironmentObject var desktops: DesktopStore
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var watchConfig: WatchConfigStore
 
     @State private var confirmUnbind = false
 
@@ -62,6 +63,8 @@ struct UserSheet: View {
                         Label("解除绑定（删除本机密钥）", systemImage: "link.badge.plus")
                     }
                 }
+
+                WatchSection()
             }
             .navigationTitle("用户")
             .navigationBarTitleDisplayMode(.inline)
@@ -121,6 +124,100 @@ private struct LabeledRow: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
+        }
+    }
+}
+
+/// Apple Watch 配置区块：专用会话 + 模型偏好，改动即同步到手表。
+/// 手表端无模型选择，模型偏好在这里选好共享过去。
+private struct WatchSection: View {
+    @EnvironmentObject var store: ShellStore
+    @EnvironmentObject var watchConfig: WatchConfigStore
+    @ObservedObject private var link = WatchLink.shared
+
+    var body: some View {
+        Section {
+            Picker("专用会话", selection: sessionBinding) {
+                Text("未配置").tag(String?.none)
+                ForEach(sortedSessions) { session in
+                    Text(session.title).tag(String?.some(session.id))
+                }
+                if let sid = watchConfig.sessionId,
+                   !sortedSessions.contains(where: { $0.id == sid }) {
+                    Text("\(watchConfig.sessionTitle ?? sid)（已失效）")
+                        .tag(String?.some(sid))
+                }
+            }
+            .pickerStyle(.menu)
+            Picker("模型偏好", selection: modelBinding) {
+                Text("跟随桌面当前").tag(String?.none)
+                ForEach(store.config?.providerModels ?? [], id: \.self) { model in
+                    Text(model).tag(String?.some(model))
+                }
+            }
+            .pickerStyle(.menu)
+            statusRow
+            Button {
+                link.resync()
+            } label: {
+                Label("重新同步到手表", systemImage: "arrow.triangle.2.circlepath")
+            }
+        } header: {
+            Label("Apple Watch", systemImage: "applewatch")
+        } footer: {
+            Text("手表发送固定到这个会话：空闲立即发送，运行中自动排队。模型偏好即桌面全局模型（手表端不选模型）。")
+        }
+    }
+
+    private var sortedSessions: [SessionMeta] {
+        store.sessions.sorted { ($0.updatedAt ?? 0) > ($1.updatedAt ?? 0) }
+    }
+
+    private var sessionBinding: Binding<String?> {
+        Binding(
+            get: { watchConfig.sessionId },
+            set: { newId in
+                let title = newId.flatMap { id in store.sessions.first { $0.id == id }?.title }
+                watchConfig.save(sessionId: newId, title: title, model: watchConfig.model)
+            })
+    }
+
+    /// 模型偏好：切换即同步改桌面全局模型（provider 来源时）
+    private var modelBinding: Binding<String?> {
+        Binding(
+            get: { watchConfig.model },
+            set: { newModel in
+                watchConfig.save(sessionId: watchConfig.sessionId,
+                                 title: watchConfig.sessionTitle,
+                                 model: newModel)
+                if let newModel, store.config?.sourceType == "provider" {
+                    store.setOverrideModel(newModel)
+                }
+            })
+    }
+
+    @ViewBuilder
+    private var statusRow: some View {
+        if !link.isPaired || !link.isInstalled {
+            HStack {
+                Text("手表")
+                Spacer()
+                Text(link.isPaired ? "未安装 App" : "未配对")
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            HStack {
+                Text("同步")
+                Spacer()
+                if let error = link.syncError {
+                    Text("失败：\(error)").foregroundStyle(.red).lineLimit(1)
+                } else if let at = link.lastSyncAt {
+                    Text(at.formatted(.relative(presentation: .named)))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("待同步").foregroundStyle(.secondary)
+                }
+            }
         }
     }
 }
