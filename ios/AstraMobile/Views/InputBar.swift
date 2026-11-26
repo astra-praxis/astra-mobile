@@ -192,7 +192,7 @@ struct InputBar: View {
                 showAttachTray = false
                 showFileImporter = true
             }
-            trayButton(icon: "laptop.and.iphone", label: "PC 文件") {
+            trayButton(icon: "desktopcomputer", label: "PC 文件") {
                 showAttachTray = false
                 showPCFiles = true
             }
