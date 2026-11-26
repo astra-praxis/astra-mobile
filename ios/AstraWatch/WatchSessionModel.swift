@@ -25,10 +25,18 @@ final class WatchSessionModel: NSObject, ObservableObject {
     /// 收到的最近回复（最多 10 条，新的在前）
     @Published private(set) var history: [String] = []
     @Published private(set) var phoneReachable = false
-    /// 绑定配置（iPhone 推送）：手机不在身边时直连中继用
+    /// 绑定配置（iPhone 推送）：手机不在身边时直连中继用。
+    /// scheme/host/port 走 applicationContext（不敏感），secret 走即时消息
+    /// 送达后存 Keychain——applicationContext 是系统落盘的，不放密钥
     @Published private(set) var binding: WatchDirectClient.Binding?
 
     private var lastConfigAt: TimeInterval = 0
+    /// applicationContext 里最近一次的绑定端点（secret 送达后用它拼 Binding）
+    private var pendingBindScheme: String?
+    private var pendingBindHost: String?
+    private var pendingBindPort: Int?
+    /// 当前密钥在 Keychain 里的 account（解绑/换桌面时清理旧项）
+    private var keychainAccount: String?
     /// 直连模式的回复累积（message_delta 拼接，run 结束收整段）
     private var directReplyBuffer: String?
 
@@ -205,21 +213,44 @@ final class WatchSessionModel: NSObject, ObservableObject {
             }
         }
         applyRunState(ctx["run_state"] as? String)
-        // 绑定配置：iPhone 不在身边时手表直连中继的凭据
+        // 绑定端点：手机不在身边时手表直连中继用（secret 另行走即时消息 + Keychain）
         if let scheme = ctx["bind_scheme"] as? String, !scheme.isEmpty,
            let host = ctx["bind_host"] as? String, !host.isEmpty,
-           let port = ctx["bind_port"] as? Int, port > 0,
-           let secret = ctx["bind_secret"] as? String, !secret.isEmpty {
-            let newBinding = WatchDirectClient.Binding(scheme: scheme, host: host,
-                                                       port: port, secret: secret)
-            if binding != newBinding {
-                // 配置变了，旧直连作废
-                WatchDirectClient.shared.close()
-            }
-            binding = newBinding
+           let port = ctx["bind_port"] as? Int, port > 0 {
+            pendingBindScheme = scheme
+            pendingBindHost = host
+            pendingBindPort = port
+            rebuildBinding()
         } else {
+            pendingBindScheme = nil
+            pendingBindHost = nil
+            pendingBindPort = nil
             binding = nil
+            if let acct = keychainAccount {
+                WatchKeychain.delete(account: acct)
+                keychainAccount = nil
+            }
         }
+    }
+
+    /// 用已知的端点 + Keychain 里的密钥拼 Binding；密钥没到就先不启用直连
+    private func rebuildBinding() {
+        guard let scheme = pendingBindScheme, let host = pendingBindHost,
+              let port = pendingBindPort else {
+            binding = nil
+            return
+        }
+        guard let secret = WatchKeychain.load(account: "\(host):\(port)"), !secret.isEmpty else {
+            binding = nil   // 端点已更新但密钥未同步：等 iPhone 可达时补发
+            return
+        }
+        let newBinding = WatchDirectClient.Binding(scheme: scheme, host: host,
+                                                   port: port, secret: secret)
+        if binding != newBinding {
+            // 配置变了，旧直连作废
+            WatchDirectClient.shared.close()
+        }
+        binding = newBinding
     }
 
     private func applyRunState(_ raw: String?) {
@@ -262,6 +293,21 @@ final class WatchSessionModel: NSObject, ObservableObject {
         case "send_result":
             if message["ok"] as? Bool != true {
                 sendState = .failed("发送失败，请重试")
+            }
+        case "bind_secret":
+            // 密钥只走即时消息（不落 applicationContext），到手即存 Keychain
+            if let secret = message["secret"] as? String, !secret.isEmpty,
+               let host = message["host"] as? String, !host.isEmpty,
+               let port = message["port"] as? Int, port > 0 {
+                let acct = "\(host):\(port)"
+                if let old = keychainAccount, old != acct {
+                    WatchKeychain.delete(account: old)
+                }
+                WatchKeychain.save(secret: secret, account: acct)
+                keychainAccount = acct
+                if pendingBindHost == host, pendingBindPort == port {
+                    rebuildBinding()
+                }
             }
         default:
             break

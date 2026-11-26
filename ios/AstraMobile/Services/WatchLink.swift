@@ -30,8 +30,9 @@ final class WatchLink: NSObject, ObservableObject {
     private weak var shell: ShellStore?
 
     /// 绑定配置快照（ShellStore 创建时推入）：手表在 iPhone 不在身边时
-    /// 用它直连中继（同一份协议：换票 → 桥 WS）。secret 随 applicationContext
-    /// 同步——WCSession 端到端加密，手表本地 UserDefaults 存储
+    /// 用它直连中继（同一份协议：换票 → 桥 WS）。端点（scheme/host/port）随
+    /// applicationContext 同步；secret 不进 applicationContext（系统落盘），
+    /// 只走即时消息送达手表后由手表存 Keychain，可达时自动补发
     private(set) var bindingScheme: String?
     private(set) var bindingHost: String?
     private(set) var bindingPort: Int?
@@ -76,7 +77,8 @@ final class WatchLink: NSObject, ObservableObject {
         rebuildContextAndPush()
     }
 
-    /// 重建 applicationContext（保留未送达的回复与运行状态）并推送
+    /// 重建 applicationContext（保留未送达的回复与运行状态）并推送。
+    /// 注意：密钥不在这里，只走 pushSecretToWatch
     private func rebuildContextAndPush() {
         var context: [String: Any] = [
             "session_id": watchSessionId ?? "",
@@ -86,12 +88,20 @@ final class WatchLink: NSObject, ObservableObject {
             "bind_scheme": bindingScheme ?? "",
             "bind_host": bindingHost ?? "",
             "bind_port": bindingPort ?? 0,
-            "bind_secret": bindingSecret ?? "",
         ]
         if let last = pendingContext["last_reply"] { context["last_reply"] = last }
         if let lastState = pendingContext["run_state"] { context["run_state"] = lastState }
         pendingContext = context
         pushContext()
+        pushSecretToWatch()
+    }
+
+    /// 密钥即时通道下发（不落 applicationContext）：手表可达时发送；
+    /// 不可达则静默失败，等 didReachabilityChange 可达后自动补发。
+    /// 手表端收到后存 Keychain，和 applicationContext 里的端点拼装 Binding
+    private func pushSecretToWatch() {
+        guard let secret = bindingSecret, let host = bindingHost, let port = bindingPort else { return }
+        sendToWatch(["type": "bind_secret", "secret": secret, "host": host, "port": port])
     }
 
     /// 手动触发一次重新同步（设置页按钮）
@@ -229,6 +239,7 @@ extension WatchLink: WCSessionDelegate {
                 self.syncError = error.localizedDescription
             }
             self.pushContext()
+            self.pushSecretToWatch()
         }
     }
 
@@ -265,8 +276,9 @@ extension WatchLink: WCSessionDelegate {
         Task { @MainActor in
             self.isReachable = reachabilityChanged
             if reachabilityChanged {
-                // 手表重新可达：补推最新配置（applicationContext 之外的即时兜底）
+                // 手表重新可达：补推最新配置 + 补发密钥（applicationContext 之外的即时兜底）
                 self.pushContext()
+                self.pushSecretToWatch()
             }
         }
     }
