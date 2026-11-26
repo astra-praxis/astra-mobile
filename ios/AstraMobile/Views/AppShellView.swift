@@ -12,6 +12,8 @@ struct AppShellView: View {
 
     /// 负一屏进度 0(关)→1(开)：拖动中逐帧跟手，松手后弹簧落到端点
     @State private var drawerProgress: CGFloat = 0
+    /// 负一屏搜索态：点击搜索框进入，列表页占满整屏
+    @State private var drawerSearchMode = false
     @State private var dragBase: CGFloat?
     @State private var dragHorizontal: Bool?
 
@@ -22,9 +24,13 @@ struct AppShellView: View {
                 AmbientBackground()
 
                 ZStack(alignment: .leading) {
-                    // 主屏与负一屏等速推移：开 = 整体右移一个屏宽的 85%，像两页纸推来推去
+                    // 主屏与负一屏等速推移：开 = 整体右移一个屏宽的 85%；
+                    // 同时微微缩小 + 长出圆角，负一屏（背景层）从主屏身后露出；
+                    // 交界处不画线不投影，层级感只靠主屏的圆弧边框
                     mainContent(geo.safeAreaInsets)
                         .offset(x: panelWidth * drawerProgress)
+                        .scaleEffect(1 - 0.06 * drawerProgress)
+                        .clipShape(RoundedRectangle(cornerRadius: 28 * drawerProgress, style: .continuous))
 
                     // 左缘手势条：屏幕左缘右滑，负一屏跟手拉出
                     Color.clear
@@ -43,10 +49,14 @@ struct AppShellView: View {
                         .zIndex(2)
 
                     // 负一屏常驻树：不随开合增删，保持 List 滚动位置与状态；
-                    // 关闭时整体滑出屏外，点按命中随进度门控
-                    DrawerView(isOpen: drawerIsOpen, width: panelWidth, progress: drawerProgress)
+                    // 关闭时整体滑出屏外，点按命中随进度门控；
+                    // 搜索态占满整屏（宽度=屏宽、偏移归零），返回按钮退出
+                    DrawerView(isOpen: drawerIsOpen,
+                               width: drawerSearchMode ? geo.size.width : panelWidth,
+                               searchMode: $drawerSearchMode,
+                               insets: geo.safeAreaInsets)
                         .simultaneousGesture(edgeDrag(width: panelWidth))   // 本体上左滑也能收（与 List 纵向滚动方向竞争）
-                        .offset(x: (drawerProgress - 1) * panelWidth)
+                        .offset(x: drawerSearchMode ? 0 : (drawerProgress - 1) * panelWidth)
                         .allowsHitTesting(drawerProgress > 0.02)
                         .zIndex(3)
                 }
@@ -138,49 +148,8 @@ struct AppShellView: View {
         ChatView()
             .safeAreaInset(edge: .top, spacing: 0) { topBar }
             // 虚化垫层夹在中间：消息流从它底下滚过，顶栏/输入卡/提示语压在它上面
-            .overlay { safeAreaVeil(insets) }
+            .overlay { SafeAreaVeil(insets: insets, bottomExtra: 56) }
             .safeAreaInset(edge: .bottom, spacing: 0) { InputBar() }
-    }
-
-    // MARK: - 安全区虚化垫层
-
-    /// 精确盖住顶/底设备安全区（状态栏、Home 指示条）的磨砂条带：
-    /// 滚动内容穿过时被虚化，浮动玻璃卡不受影响（垫层不与其重叠）。
-    /// 底带额外上探 bottomExtra（约到输入卡中部），虚化垫在输入卡后面。
-    /// 内缘 28% 高度渐变软化，避免材质与内容之间出现硬切边；
-    /// 不拦截手势，负一屏打开时状态栏区同样保持磨砂。
-    private static let bottomExtra: CGFloat = 56
-    /// 垫层整体透明度：磨砂里微微透出原色，避免条带看起来像一块灰板
-    private static let veilOpacity: Double = 0.95
-
-    private func safeAreaVeil(_ insets: EdgeInsets) -> some View {
-        VStack(spacing: 0) {
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .opacity(Self.veilOpacity)
-                .frame(height: max(0, insets.top))
-                .mask(alignment: .top) {
-                    LinearGradient(stops: [
-                        .init(color: .black, location: 0),
-                        .init(color: .black, location: 0.72),
-                        .init(color: .clear, location: 1),
-                    ], startPoint: .top, endPoint: .bottom)
-                }
-            Spacer(minLength: 0)
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .opacity(Self.veilOpacity)
-                .frame(height: max(0, insets.bottom) + Self.bottomExtra)
-                .mask(alignment: .bottom) {
-                    LinearGradient(stops: [
-                        .init(color: .clear, location: 0),
-                        .init(color: .black, location: 0.28),
-                        .init(color: .black, location: 1),
-                    ], startPoint: .top, endPoint: .bottom)
-                }
-        }
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
     }
 
     // MARK: - 悬浮玻璃顶栏：玻璃圆钮菜单 + 状态胶囊（同一 GlassEffectContainer，可融合/互变）
@@ -303,12 +272,13 @@ struct DrawerView: View {
     @EnvironmentObject var store: ShellStore
     @Binding var isOpen: Bool
     let width: CGFloat
-    /// 负一屏进度（0→1）：发丝线/阴影随进度淡入淡出，关闭时不泄入主屏
-    let progress: CGFloat
+    /// 搜索态由壳层持有：宽度/偏移要跟着切到全屏
+    @Binding var searchMode: Bool
+    /// 设备安全区 insets：顶/底磨砂垫层用
+    let insets: EdgeInsets
 
     @State private var query = ""
     @State private var showUser = false
-    @State private var searchMode = false   // 搜索页：搜索框聚焦进入，返回按钮退出
     @FocusState private var searchFocused: Bool
 
     private var trimmedQuery: String {
@@ -357,13 +327,7 @@ struct DrawerView: View {
             // 同一张环境光壁纸：负一屏与主界面共底色，像同一张屏的左右两页
             AmbientBackground()
         }
-        .overlay(alignment: .trailing) {
-            Rectangle()
-                .fill(Color.primary.opacity(0.10))
-                .frame(width: 0.5)
-                .opacity(Double(progress))   // 关闭时发丝线贴屏左缘，随进度淡出避免常驻
-        }
-        .shadow(color: .black.opacity(0.16 * Double(progress)), radius: 22, x: 8)   // 同理：关闭时阴影不泄入主屏
+        .overlay { SafeAreaVeil(insets: insets) }   // 顶/底安全区磨砂：与主屏同一观感
         .sheet(isPresented: $showUser) { UserSheet() }
         .onAppear {
             store.refreshSessions()
@@ -381,6 +345,32 @@ struct DrawerView: View {
         }
     }
 
+    /// 会话按更新时间分桶：今天 / 昨天 / 7天内 / 30天内 / 历史（桶内按更新时间倒序）
+    private func groupSessions(_ sessions: [SessionMeta]) -> [(title: String, items: [SessionMeta])] {
+        let cal = Calendar.current
+        let now = Date()
+        var buckets: [(title: String, items: [SessionMeta])] = [
+            ("今天", []), ("昨天", []), ("7天内", []), ("30天内", []), ("历史", []),
+        ]
+        for session in sessions.sorted(by: { ($0.updatedAt ?? 0) > ($1.updatedAt ?? 0) }) {
+            guard let date = session.updatedAtDate else {
+                buckets[4].items.append(session)   // 无时间戳归入历史
+                continue
+            }
+            let days = cal.dateComponents([.day],
+                                          from: cal.startOfDay(for: date),
+                                          to: cal.startOfDay(for: now)).day ?? 0
+            switch days {
+            case 0:      buckets[0].items.append(session)
+            case 1:      buckets[1].items.append(session)
+            case 2...6:  buckets[2].items.append(session)
+            case 7...29: buckets[3].items.append(session)
+            default:     buckets[4].items.append(session)
+            }
+        }
+        return buckets.filter { !$0.items.isEmpty }
+    }
+
     /// 常规页：历史会话列表 + 用户入口
     private var historyPage: some View {
         VStack(spacing: 0) {
@@ -396,7 +386,7 @@ struct DrawerView: View {
                 emptyState(icon: "clock.arrow.circlepath",
                            text: store.sessions.isEmpty ? "暂无历史会话" : "没有匹配的会话")
             } else {
-                sessionList(filtered)
+                sessionList(groupSessions(filtered))
             }
 
             Divider().opacity(0.5)
@@ -435,7 +425,7 @@ struct DrawerView: View {
             emptyState(icon: "questionmark.text.magnifyingglass",
                        text: "没有匹配的会话")
         } else {
-            sessionList(filtered)
+            sessionList(groupSessions(filtered))
         }
     }
 
@@ -464,12 +454,23 @@ struct DrawerView: View {
         .glassCapsuleButton()
     }
 
-    private func sessionList(_ sessions: [SessionMeta]) -> some View {
-        List(sessions) { session in
-            sessionRow(session)
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
+    /// 分组列表：Section 头是时间桶名（今天 / 昨天 / 7天内 / 30天内 / 历史）
+    private func sessionList(_ groups: [(title: String, items: [SessionMeta])]) -> some View {
+        List {
+            ForEach(groups, id: \.title) { group in
+                Section {
+                    ForEach(group.items) { session in
+                        sessionRow(session)
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
+                    }
+                } header: {
+                    Text(group.title)
+                        .font(.system(.caption2, design: .rounded).weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
@@ -506,37 +507,26 @@ struct DrawerView: View {
             store.openSession(session.id)
             close()
         } label: {
-            HStack(spacing: 10) {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isCurrent ? AnyShapeStyle(GlassTokens.brandGradient) : AnyShapeStyle(Color(.systemGray4).opacity(0.5)))
-                    .frame(width: 34, height: 34)
-                    .overlay(
-                        Image(systemName: isCurrent ? "bubble.left.fill" : "bubble.left")
-                            .font(.system(size: 13))
-                            .foregroundStyle(isCurrent ? .white : .secondary)
-                    )
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(session.title)
-                        .font(.callout.weight(isCurrent ? .semibold : .regular))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    HStack(spacing: 5) {
-                        if let date = session.updatedAtDate {
-                            Text(date, style: .relative)
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
-                        if store.isRunningCurrent && isCurrent {
-                            PulseDots().scaleEffect(0.7)
-                            Text("执行中")
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
-                        }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(session.title)
+                    .font(.callout.weight(isCurrent ? .semibold : .regular))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    if let date = session.updatedAtDate {
+                        Text(date, style: .relative)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    if store.isRunningCurrent && isCurrent {
+                        PulseDots().scaleEffect(0.7)
+                        Text("执行中")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
                     }
                 }
-                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(

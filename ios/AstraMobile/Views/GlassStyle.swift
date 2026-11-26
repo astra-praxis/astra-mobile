@@ -100,6 +100,47 @@ extension View {
     }
 }
 
+// MARK: - 安全区磨砂垫层
+
+/// 精确盖住顶/底设备安全区（状态栏、Home 指示条）的磨砂条带：
+/// 滚动内容/背景光斑从这些区域穿过时被虚化，内缘 28% 高度渐变软化避免硬切边。
+/// 主屏（bottomExtra 垫到输入卡中部）与负一屏共用；不拦截手势。
+struct SafeAreaVeil: View {
+    var insets: EdgeInsets
+    var bottomExtra: CGFloat = 0
+    var opacity: Double = 0.95
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .opacity(opacity)
+                .frame(height: max(0, insets.top))
+                .mask(alignment: .top) {
+                    LinearGradient(stops: [
+                        .init(color: .black, location: 0),
+                        .init(color: .black, location: 0.72),
+                        .init(color: .clear, location: 1),
+                    ], startPoint: .top, endPoint: .bottom)
+                }
+            Spacer(minLength: 0)
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .opacity(opacity)
+                .frame(height: max(0, insets.bottom) + bottomExtra)
+                .mask(alignment: .bottom) {
+                    LinearGradient(stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .black, location: 0.28),
+                        .init(color: .black, location: 1),
+                    ], startPoint: .top, endPoint: .bottom)
+                }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+}
+
 // MARK: - 环境光背景
 // 给玻璃提供可折射的色彩：两团低饱和品牌色光斑 + 系统底色。
 
