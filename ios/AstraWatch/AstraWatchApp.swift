@@ -9,6 +9,7 @@ struct AstraWatchApp: App {
             NavigationStack {
                 WatchHomeView()
             }
+            .tint(.astraAccent)
             .environmentObject(link)
         }
     }

@@ -3,7 +3,7 @@ options:
   bundleIdPrefix: io.astra.mobile
   deploymentTarget:
     iOS: "16.0"
-    watchOS: "9.0"
+    watchOS: "9.4"
   createIntermediateGroups: true
 settings:
   base:
