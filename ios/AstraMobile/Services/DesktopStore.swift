@@ -47,12 +47,13 @@ final class DesktopStore: ObservableObject {
         persist()
     }
 
-    /// 删除绑定：Keychain 里的 secret 一并清除
+    /// 删除绑定：Keychain 里的 secret 一并清除，手表侧绑定配置同步失效
     func remove(_ id: String) {
         KeychainStore.delete(account: id)
         desktops.removeAll { $0.id == id }
         if currentID == id { currentID = nil }
         persist()
+        WatchLink.shared.updateBinding(scheme: nil, host: nil, port: nil, secret: nil)
     }
 
     private func persist() {

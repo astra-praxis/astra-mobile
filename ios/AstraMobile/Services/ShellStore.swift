@@ -102,8 +102,13 @@ final class ShellStore: ObservableObject {
             guard self != nil else { return }
             WatchLink.shared.notifyTTSState(speaking)
         }
-        // 手表桥挂接：手表发来的消息落到本 store；store 释放时弱引用自动失效
+        // 手表桥挂接：手表发来的消息落到本 store；store 释放时弱引用自动失效。
+        // 同时推绑定配置——手表在 iPhone 不在身边时凭它直连中继
         WatchLink.shared.attach(self)
+        WatchLink.shared.updateBinding(scheme: desktop.scheme,
+                                       host: desktop.host,
+                                       port: desktop.port,
+                                       secret: secret)
     }
 
     // MARK: - 派生状态

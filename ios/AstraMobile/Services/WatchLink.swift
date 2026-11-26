@@ -29,6 +29,14 @@ final class WatchLink: NSObject, ObservableObject {
     /// 手表端发来的消息回调（ShellStore attach 后设置）
     private weak var shell: ShellStore?
 
+    /// 绑定配置快照（ShellStore 创建时推入）：手表在 iPhone 不在身边时
+    /// 用它直连中继（同一份协议：换票 → 桥 WS）。secret 随 applicationContext
+    /// 同步——WCSession 端到端加密，手表本地 UserDefaults 存储
+    private(set) var bindingScheme: String?
+    private(set) var bindingHost: String?
+    private(set) var bindingPort: Int?
+    private(set) var bindingSecret: String?
+
     /// 专用会话的回复累积（message_delta 拼接，run 结束时发给手表）
     private var replyBuffer: String?
     private var replyRunning = false
@@ -56,13 +64,30 @@ final class WatchLink: NSObject, ObservableObject {
         watchSessionTitle = title
         watchModel = model
         if let announce { announceOn = announce }
+        rebuildContextAndPush()
+    }
+
+    /// 推送绑定配置给手表（ShellStore 创建时调用；桌面解绑传全 nil 清除）
+    func updateBinding(scheme: String?, host: String?, port: Int?, secret: String?) {
+        bindingScheme = scheme
+        bindingHost = host
+        bindingPort = port
+        bindingSecret = secret
+        rebuildContextAndPush()
+    }
+
+    /// 重建 applicationContext（保留未送达的回复与运行状态）并推送
+    private func rebuildContextAndPush() {
         var context: [String: Any] = [
-            "session_id": sessionId ?? "",
-            "session_title": title ?? "",
-            "model": model ?? "",
+            "session_id": watchSessionId ?? "",
+            "session_title": watchSessionTitle ?? "",
+            "model": watchModel ?? "",
             "updated_at": Date().timeIntervalSince1970,
+            "bind_scheme": bindingScheme ?? "",
+            "bind_host": bindingHost ?? "",
+            "bind_port": bindingPort ?? 0,
+            "bind_secret": bindingSecret ?? "",
         ]
-        // 保留未送达的回复（手表重进还能看到最后一条）
         if let last = pendingContext["last_reply"] { context["last_reply"] = last }
         if let lastState = pendingContext["run_state"] { context["run_state"] = lastState }
         pendingContext = context

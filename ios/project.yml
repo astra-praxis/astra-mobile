@@ -31,6 +31,8 @@ targets:
         WKApplication: true
         WKCompanionAppBundleIdentifier: io.astra.mobile.AstraMobile
         WKWatchOnly: false
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
   AstraMobile:
     type: application
     platform: iOS
