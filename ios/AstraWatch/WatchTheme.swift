@@ -45,9 +45,11 @@ struct PressableButtonStyle: ButtonStyle {
     }
 }
 
-/// 运行中呼吸点：整块 UI 唯一的自主动效，传达「agent 活着」
+/// 运行中呼吸点：整块 UI 唯一的自主动效，传达「agent 活着」。
+/// AOD（低亮度常显）下停止动画，只留静态点。
 struct LiveDot: View {
     let active: Bool
+    var animate: Bool = true
     @State private var pulsing = false
 
     var body: some View {
@@ -64,14 +66,22 @@ struct LiveDot: View {
             }
             .onChange(of: active) { now in
                 pulsing = false
-                if now {
+                if now && animate {
+                    withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) {
+                        pulsing = true
+                    }
+                }
+            }
+            .onChange(of: animate) { now in
+                pulsing = false
+                if now && active {
                     withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) {
                         pulsing = true
                     }
                 }
             }
             .onAppear {
-                if active {
+                if active && animate {
                     withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) {
                         pulsing = true
                     }

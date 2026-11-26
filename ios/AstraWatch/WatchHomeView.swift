@@ -5,16 +5,20 @@ import WatchKit
 /// 动效只回应动作：发送、展开、状态翻转；运行中呼吸点是唯一的自主动效。
 struct WatchHomeView: View {
     @EnvironmentObject var link: WatchSessionModel
+    @Environment(\.isLuminanceReduced) private var dimmed
     @State private var expanded = false
     @State private var showInput = false
     @State private var draft = ""
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                if link.isUnconfigured {
-                    unconfigured
-                } else {
+            if dimmed {
+                // AOD 低功耗常显：状态 + 回复摘要，无交互元素、无动画
+                aodContent
+            } else if link.isUnconfigured {
+                unconfigured
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
                     statusRow
                     replyCard
                     ttsBar
@@ -22,17 +26,56 @@ struct WatchHomeView: View {
                     sendStatusText
                     detailLink
                 }
+                .animation(.spring(response: 0.35, dampingFraction: 0.8), value: link.sendState)
+                .animation(.spring(response: 0.32, dampingFraction: 0.8), value: link.ttsSpeaking)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 2)
-            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: link.sendState)
-            .animation(.spring(response: 0.32, dampingFraction: 0.8), value: link.ttsSpeaking)
         }
         .navigationTitle(link.sessionTitle ?? "Astra")
         .background(Color.black.ignoresSafeArea())
         .sheet(isPresented: $showInput) {
             inputPanel
         }
+    }
+
+    // MARK: - AOD 常显
+
+    /// 手腕放下时的低功耗画面：系统会限制刷新率与交互，只保留可扫一眼的信息
+    private var aodContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if link.isUnconfigured {
+                Text("未配置 · 请在 iPhone 上设置")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.4))
+            } else {
+                HStack(spacing: 6) {
+                    LiveDot(active: link.running, animate: false)
+                    Text(link.running ? "运行中" : "空闲")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.4))
+                    Spacer()
+                    if let model = link.model {
+                        Text(model)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.white.opacity(0.25))
+                            .lineLimit(1)
+                    }
+                }
+                if let reply = link.lastReply {
+                    Text(reply)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.white.opacity(0.45))
+                        .lineLimit(4)
+                        .lineSpacing(3)
+                }
+                if link.ttsSpeaking {
+                    Text("iPhone 播报中")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.25))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 6)
     }
 
     // MARK: - 状态行
