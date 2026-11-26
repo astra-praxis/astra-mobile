@@ -96,6 +96,10 @@ enum ChatEnvelope {
             var e = ChatEntry(id: UUID(), kind: "user")
             e.text = text
             e.sender = env["sender"] as? String
+            // 手机/桌面带图发送：PC 广播透传 images（base64 PNG），历史拉取同款字段
+            if let imgs = env["images"] as? [[String: Any]] {
+                e.images = imgs.compactMap { ($0["data"] as? String).flatMap { Data(base64Encoded: $0) } }
+            }
             if replay {
                 for i in stride(from: list.count - 1, through: 0, by: -1) {
                     if list[i].kind == "user" {

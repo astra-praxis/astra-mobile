@@ -64,6 +64,10 @@ final class ShellStore: ObservableObject {
     private var pendingAdoptionMsgId: String?  // 新对话发出的 send msg_id，收养精确匹配（文本可能被 PC 解析改写）
     private var pendingAdoptionAt = Date.distantPast
     private var toastResetTask: Task<Void, Never>?
+    // PC 项目文件浏览（fs_files/fs_read）：req_id → 回调表，应答是广播、多设备各自认领
+    private var fsReqSeq: UInt64 = 0
+    private var fsFilesCallbacks: [UInt64: (String?, [String], String?) -> Void] = [:]
+    private var fsReadCallbacks: [UInt64: (String?, String?, String?) -> Void] = [:]
 
     init(desktop: BoundDesktop, secret: String) {
         self.desktop = desktop
@@ -188,11 +192,16 @@ final class ShellStore: ObservableObject {
 
     /// 发送消息进 PC（web doSend 语义：仅「新对话」发 session_id=null 由 PC 建会话，
     /// 其余发当前会话 id）。PC 运行中时消息在 PC 侧自动进入队列（协议既定行为）；
-    /// 气泡与发送结果 toast 均由 PC 广播/下发，本地不回显
+    /// 气泡与发送结果 toast 均由 PC 广播/下发，本地不回显。
+    /// images：原始图片字节 base64（PC 端归一化为规范 PNG）；files：文件字节 base64
+    /// （PC 端落盘粘贴目录，正文改写为 read_file 指令）
     @discardableResult
-    func send(_ text: String) -> Bool {
+    func send(_ text: String,
+              images: [[String: Any]]? = nil,
+              files: [[String: Any]]? = nil) -> Bool {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty else { return false }
+        let hasAttachments = (images?.isEmpty == false) || (files?.isEmpty == false)
+        guard !body.isEmpty || hasAttachments else { return false }
         guard isConnected, ws != nil else {
             astraLog("send ✗ 未连接 state:", connState, "ws:", ws != nil)
             showToast("未连接到 PC，请稍候重试")
@@ -200,6 +209,7 @@ final class ShellStore: ObservableObject {
         }
         astraLog("send current:", currentSessionId ?? "nil(新对话)",
                  "pickedNew:", pickedNew, "awaitingAdoption:", pendingAdoptionText != nil,
+                 "imgs:", images?.count ?? 0, "files:", files?.count ?? 0,
                  "text:", body)
         msgSeq += 1
         let adoptionMsgId = "\(msgClientId)-\(msgSeq)"
@@ -210,6 +220,8 @@ final class ShellStore: ObservableObject {
             "sender": senderName,
         ]
         command["session_id"] = currentSessionId ?? NSNull()
+        if let images, !images.isEmpty { command["images"] = images }
+        if let files, !files.isEmpty { command["files"] = files }
         // 新对话发送：记录 msg_id（收养精确匹配）与剥离后的文本（匹配兑底），
         // PC 广播 user_message 时透传 origin_msg_id（web sentAt/sentText，发送成功才记录）
         let awaitingAdoption = currentSessionId == nil
@@ -319,7 +331,40 @@ final class ShellStore: ObservableObject {
     private func handleDisconnected() {
         guard connState != .disconnected else { return }
         connState = .disconnected
+        failPendingFs("连接已断开")
         scheduleReconnect()
+    }
+
+    /// 断线/发送失败时把还在等 PC 应答的文件请求全部落空回调，避免界面无限转圈
+    private func failPendingFs(_ reason: String) {
+        let files = fsFilesCallbacks
+        let reads = fsReadCallbacks
+        fsFilesCallbacks = [:]
+        fsReadCallbacks = [:]
+        for (_, cb) in files { cb(nil, [], reason) }
+        for (_, cb) in reads { cb(nil, nil, reason) }
+    }
+
+    /// 请求 PC 端项目文件列表（桌面未打开项目时 error 有值）
+    func requestPCFiles(completion: @escaping (_ project: String?, _ files: [String], _ error: String?) -> Void) {
+        fsReqSeq += 1
+        let reqId = fsReqSeq
+        fsFilesCallbacks[reqId] = completion
+        sendCommand(["type": "fs_files", "req_id": reqId]) { [weak self] ok in
+            guard let self, !ok else { return }
+            self.fsFilesCallbacks.removeValue(forKey: reqId)?(nil, [], "发送失败，请稍候重试")
+        }
+    }
+
+    /// 读取 PC 端项目内单个文本文件（预览用，后端限 256KB 且校验路径不出项目）
+    func requestPCFileContent(path: String, completion: @escaping (_ path: String?, _ content: String?, _ error: String?) -> Void) {
+        fsReqSeq += 1
+        let reqId = fsReqSeq
+        fsReadCallbacks[reqId] = completion
+        sendCommand(["type": "fs_read", "req_id": reqId, "path": path]) { [weak self] ok in
+            guard let self, !ok else { return }
+            self.fsReadCallbacks.removeValue(forKey: reqId)?(path, nil, "发送失败，请稍候重试")
+        }
     }
 
     private func scheduleReconnect() {
@@ -348,7 +393,7 @@ final class ShellStore: ObservableObject {
         }
     }
 
-    private func showToast(_ text: String) {
+    func showToast(_ text: String) {
         astraLog("toast:", text)
         toast = text
         toastResetTask?.cancel()
@@ -419,6 +464,10 @@ final class ShellStore: ObservableObject {
             handleEnvelope(env)
         case .question(let q):
             messages.applyQuestion(q)
+        case .fsFilesResult(let reqId, let project, let files, let error):
+            fsFilesCallbacks.removeValue(forKey: reqId)?(project, files, error)
+        case .fsReadResult(let reqId, let path, let content, let error):
+            fsReadCallbacks.removeValue(forKey: reqId)?(path, content, error)
         }
     }
 

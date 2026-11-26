@@ -92,6 +92,8 @@ enum ShellEvent {
     case runSettled(String?)
     case envelope([String: Any])      // agent-event 载荷
     case question([String: Any])      // agent-question 载荷（提问/选项）
+    case fsFilesResult(reqId: UInt64, project: String?, files: [String], error: String?)
+    case fsReadResult(reqId: UInt64, path: String?, content: String?, error: String?)
 
     static func parse(_ dict: [String: Any]) -> ShellEvent? {
         switch dict["type"] as? String {
@@ -118,6 +120,19 @@ enum ShellEvent {
             return .envelope(dict["payload"] as? [String: Any] ?? [:])
         case "agent-question":
             return .question(dict["payload"] as? [String: Any] ?? [:])
+        case "fs_files_result":
+            // 手机浏览 PC 项目文件的应答（带 req_id，多设备各自认领）
+            return .fsFilesResult(
+                reqId: (dict["req_id"] as? NSNumber)?.uint64Value ?? 0,
+                project: dict["project"] as? String,
+                files: (dict["files"] as? [Any])?.compactMap { $0 as? String } ?? [],
+                error: dict["error"] as? String)
+        case "fs_read_result":
+            return .fsReadResult(
+                reqId: (dict["req_id"] as? NSNumber)?.uint64Value ?? 0,
+                path: dict["path"] as? String,
+                content: dict["content"] as? String,
+                error: dict["error"] as? String)
         default:
             return nil  // pair/pong 等壳不关心
         }

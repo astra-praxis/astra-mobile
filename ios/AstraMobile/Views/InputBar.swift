@@ -1,10 +1,30 @@
+import PhotosUI
 import SwiftUI
 
 /// 底部悬浮玻璃输入卡：多行输入 + 浅色工具钮（卡内不嵌玻璃）+ 品牌渐变发送键。
 /// 队列/新对话/模型与思考收在卡内左下（单手可达），发送在右下。
 /// 右侧语音/文字切换：语音模式输入区变为「按住说话」（Speech 实时转写，松手发送、上滑取消）。
+/// 加号入口：发图片/文件到 PC（图片 PC 端归一化，文件 PC 端落盘粘贴目录）；
+/// 以及浏览 PC 当前打开的项目文件（fs 转发到桌面前端）。
 struct InputBar: View {
     @EnvironmentObject var store: ShellStore
+
+    /// 待发送图片（已转 JPEG 的原始字节，展示用直接解 UIImage）
+    struct PendingImage: Identifiable {
+        let id = UUID()
+        let data: Data
+        var image: UIImage? { UIImage(data: data) }
+    }
+
+    /// 待发送文件（名字 + 字节，PC 端落盘粘贴目录后改写正文为 read_file 指令）
+    struct PendingFile: Identifiable {
+        let id = UUID()
+        let name: String
+        let data: Data
+    }
+
+    /// 单文件上限：桥 WS 单帧虽可到 64MB，弱网下大文件会卡死收发，主动自限
+    private static let maxFileBytes = 8 * 1024 * 1024
 
     @State private var text = ""
     @State private var voiceMode = false
@@ -13,8 +33,20 @@ struct InputBar: View {
     @StateObject private var speech = SpeechRecorder()
     @FocusState private var focused: Bool
 
+    @State private var pendingImages: [PendingImage] = []
+    @State private var pendingFiles: [PendingFile] = []
+    @State private var showAttachMenu = false
+    @State private var showPhotoPicker = false
+    @State private var showFileImporter = false
+    @State private var showPCFiles = false
+    @State private var pickerItems: [PhotosPickerItem] = []
+
+    private var hasAttachments: Bool {
+        !pendingImages.isEmpty || !pendingFiles.isEmpty
+    }
+
     private var canSend: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || hasAttachments
     }
 
     var body: some View {
@@ -37,6 +69,10 @@ struct InputBar: View {
             if store.isRunningCurrent {
                 runningPill
                     .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            if !pendingImages.isEmpty || !pendingFiles.isEmpty {
+                attachmentBar
             }
 
             if voiceMode {
@@ -72,7 +108,12 @@ struct InputBar: View {
                 Spacer(minLength: 0)
 
                 // 右下角互斥单钮：有文字→发送；无文字→话筒（点击进语音模式）；
-                // 语音模式下常驻键盘钮（点击回文字模式）
+                // 语音模式下常驻键盘钮（点击回文字模式）。加号在话筒/发送左侧
+                toolButton("plus") {
+                    showAttachMenu = true
+                }
+                .disabled(speech.recording)
+
                 if voiceMode {
                     modeSwitchButton(icon: "keyboard")
                 } else if canSend {
@@ -91,6 +132,30 @@ struct InputBar: View {
         .glassCard(cornerRadius: 26)
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: store.isRunningCurrent)
         .animation(.spring(response: 0.28, dampingFraction: 0.85), value: voiceMode)
+        .confirmationDialog("添加附件", isPresented: $showAttachMenu, titleVisibility: .visible) {
+            Button("照片图库") { showPhotoPicker = true }
+            Button("文件") { showFileImporter = true }
+            Button("浏览 PC 项目文件") { showPCFiles = true }
+            Button("取消", role: .cancel) {}
+        }
+        .photosPicker(isPresented: $showPhotoPicker, selection: $pickerItems,
+                      maxSelectionCount: 4, matching: .images)
+        .onChange(of: pickerItems) { items in
+            loadPickedPhotos(items)
+        }
+        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.data],
+                      allowsMultipleSelection: true) { result in
+            importPickedFiles(result)
+        }
+        .sheet(isPresented: $showPCFiles) {
+            PCFilesView { path in
+                // 引用：与桌面 @ 引用同款，路径塞回输入框由 Agent 自己 read_file
+                showPCFiles = false
+                text += "@\(path) "
+                voiceMode = false
+                focused = true
+            }
+        }
         .onAppear {
             #if DEBUG
             // 模拟器截图/调试钩子：启动直接进入语音模式
@@ -111,6 +176,131 @@ struct InputBar: View {
                 }
             }
         }
+    }
+
+    // MARK: - 附件条（图片缩略图 + 文件 chip，可逐个删除）
+
+    private var attachmentBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(pendingImages) { img in
+                    attachmentThumbnail(img)
+                }
+                ForEach(pendingFiles) { file in
+                    attachmentFileChip(file)
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.top, 6)
+        }
+        .frame(height: pendingFiles.isEmpty ? 54 : 34)
+    }
+
+    private func attachmentThumbnail(_ img: PendingImage) -> some View {
+        Group {
+            if let ui = img.image {
+                Image(uiImage: ui)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 46, height: 46)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            } else {
+                Image(systemName: "photo")
+                    .frame(width: 46, height: 46)
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            removeButton { pendingImages.removeAll { $0.id == img.id } }
+        }
+    }
+
+    private func attachmentFileChip(_ file: PendingFile) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "doc")
+                .font(.system(size: 11))
+            Text(file.name)
+                .font(.system(size: 12, design: .rounded))
+                .lineLimit(1)
+            Text(String(format: "%.1fMB", Double(file.data.count) / 1_048_576))
+                .font(.system(size: 10, design: .rounded))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(Color.primary.opacity(0.06), in: Capsule())
+        .overlay(alignment: .topTrailing) {
+            removeButton { pendingFiles.removeAll { $0.id == file.id } }
+        }
+    }
+
+    /// chip 右上角的小叉（白底圆片保证在缩略图上也看得见）
+    private func removeButton(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 15))
+                .foregroundStyle(.white, .gray)
+                .background(Circle().fill(Color(.systemBackground)).frame(width: 13, height: 13))
+        }
+        .buttonStyle(.plain)
+        .offset(x: 5, y: -5)
+    }
+
+    /// 相册选图：统一转 JPEG 再入列（PC 端归一化只认 PNG/JPEG/WebP，
+    /// 相册原图多为 HEIC，直接发原始字节会被拒）
+    private func loadPickedPhotos(_ items: [PhotosPickerItem]) {
+        guard !items.isEmpty else { return }
+        let existing = pendingImages.count
+        let room = max(0, 4 - existing)
+        guard room > 0 else {
+            pickerItems = []
+            showToast("单条最多 4 张图片")
+            return
+        }
+        let accepted = items.prefix(room)
+        if items.count > room { showToast("单条最多 4 张图片，已取前 \(room) 张") }
+        pickerItems = []
+        Task {
+            var loaded: [PendingImage] = []
+            for item in accepted {
+                if let data = try? await item.loadTransferable(type: Data.self),
+                   let img = UIImage(data: data),
+                   let jpeg = img.jpegData(compressionQuality: 0.9) {
+                    loaded.append(PendingImage(data: jpeg))
+                }
+            }
+            if loaded.isEmpty {
+                showToast("图片读取失败")
+            }
+            pendingImages += loaded
+        }
+    }
+
+    /// 文件选择：读字节入列，单文件超限明确提示
+    private func importPickedFiles(_ result: Result<[URL], Error>) {
+        switch result {
+        case .failure(let e):
+            showToast("文件读取失败：\(e.localizedDescription)")
+        case .success(let urls):
+            for url in urls {
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                do {
+                    let data = try Data(contentsOf: url)
+                    if data.count > Self.maxFileBytes {
+                        showToast("\(url.lastPathComponent) 超过 8MB 上限")
+                        continue
+                    }
+                    pendingFiles.append(PendingFile(name: url.lastPathComponent, data: data))
+                } catch {
+                    showToast("\(url.lastPathComponent) 读取失败")
+                }
+            }
+        }
+    }
+
+    private func showToast(_ text: String) {
+        store.showToast(text)
     }
 
     /// 执行中指示：呼吸点胶囊（玻璃卡内部不嵌玻璃，用纯色胶囊）
@@ -278,9 +468,16 @@ struct InputBar: View {
 
     private func send() {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        if store.send(text) {
+        guard !trimmed.isEmpty || hasAttachments else { return }
+        // 图片/文件负载：图片已转 JPEG；文件原字节，PC 端落盘粘贴目录后改写正文
+        let imgs = pendingImages.map { ["data": $0.data.base64EncodedString()] }
+        let files = pendingFiles.map { ["name": $0.name, "data": $0.data.base64EncodedString()] }
+        if store.send(text,
+                      images: imgs.isEmpty ? nil : imgs,
+                      files: files.isEmpty ? nil : files) {
             text = ""
+            pendingImages = []
+            pendingFiles = []
             // 不收键盘：保留焦点方便连续快速发送
         }
     }
