@@ -5,7 +5,8 @@ import SwiftUI
 /// 状态模型与 web 手机页（mobile_bridge_mobile.html）完全同构：
 /// - currentSessionId == nil 即「新对话」态（web 的 NEW）
 /// - pickedNew：用户主动新建后不再自动跟进 PC 的 view
-/// - pendingAdoptionText/At：从新对话发出的消息（剥过 /技能 前缀），60s 内文本精确匹配收养
+/// - pendingAdoptionText/At/MsgId：新对话发出的消息（剥过 /技能 前缀），60s 内
+///   msg_id 精确匹配收养（PC 广播透传 origin_msg_id），文本匹配兑底
 /// - 消息不做本地回显：PC 前端按下发送即广播 user_message，气泡由广播驱动；toast 由 PC 权威下发
 @MainActor
 final class ShellStore: ObservableObject {
@@ -59,7 +60,8 @@ final class ShellStore: ObservableObject {
     private var msgSeq = 0
     private var backoff: TimeInterval = 1
     private var reconnectTask: Task<Void, Never>?
-    private var pendingAdoptionText: String?   // 新对话发出的消息文本（剥离后），收养匹配用
+    private var pendingAdoptionText: String?   // 新对话发出的消息文本（剥离后），收养文本匹配兑底
+    private var pendingAdoptionMsgId: String?  // 新对话发出的 send msg_id，收养精确匹配（文本可能被 PC 解析改写）
     private var pendingAdoptionAt = Date.distantPast
     private var toastResetTask: Task<Void, Never>?
 
@@ -178,6 +180,7 @@ final class ShellStore: ObservableObject {
         astraLog("adoptSession →", String(sid.prefix(8)))
         pendingAdoptionAt = .distantPast
         pendingAdoptionText = nil
+        pendingAdoptionMsgId = nil
         pickedNew = false
         currentSessionId = sid
         messages.openSession(sid)
@@ -199,20 +202,23 @@ final class ShellStore: ObservableObject {
                  "pickedNew:", pickedNew, "awaitingAdoption:", pendingAdoptionText != nil,
                  "text:", body)
         msgSeq += 1
+        let adoptionMsgId = "\(msgClientId)-\(msgSeq)"
         var command: [String: Any] = [
             "type": "send",
-            "msg_id": "\(msgClientId)-\(msgSeq)",
+            "msg_id": adoptionMsgId,
             "text": body,
             "sender": senderName,
         ]
         command["session_id"] = currentSessionId ?? NSNull()
-        // 新对话发送：记录剥离后的文本供收养匹配（web sentAt/sentText，发送成功才记录）
+        // 新对话发送：记录 msg_id（收养精确匹配）与剥离后的文本（匹配兑底），
+        // PC 广播 user_message 时透传 origin_msg_id（web sentAt/sentText，发送成功才记录）
         let awaitingAdoption = currentSessionId == nil
         let adoptionText = stripSkillPrefix(body)
         sendCommand(command) { [weak self] ok in
             guard let self, ok, awaitingAdoption else { return }
             self.pendingAdoptionAt = Date()
             self.pendingAdoptionText = adoptionText
+            self.pendingAdoptionMsgId = adoptionMsgId
         }
         return true
     }
@@ -416,7 +422,7 @@ final class ShellStore: ObservableObject {
         }
     }
 
-    /// web onEnvelope 语义：未初始化的会话先试收养（新对话发送的文本精确匹配），
+    /// web onEnvelope 语义：未初始化的会话先试收养（msg_id 精确匹配优先，文本匹配兑底），
     /// 事件一律进缓冲；已初始化的交给消息中心按 current/缓存路由
     private var envelopeDeltaCount = 0
 
@@ -434,10 +440,16 @@ final class ShellStore: ObservableObject {
         if !messages.isInitialized(sid),
            env["type"] as? String == "user_message",
            currentSessionId == nil,
-           let sent = pendingAdoptionText,
-           env["text"] as? String == sent,
            Date().timeIntervalSince(pendingAdoptionAt) < 60 {
-            adoptSession(sid)
+            // 收养判定：PC 广播透传的 origin_msg_id 与本机 send 的 msg_id 一致 → 精确命中；
+            // 老版本 PC 无 origin_msg_id，退回文本匹配（剥离后应一致，但可能被 PC 解析改写）
+            let msgMatch = env["origin_msg_id"] as? String == pendingAdoptionMsgId
+                && pendingAdoptionMsgId != nil
+            let textMatch = pendingAdoptionText != nil
+                && env["text"] as? String == pendingAdoptionText
+            if msgMatch || textMatch {
+                adoptSession(sid)
+            }
         }
         trackRunning(sid, env)
         messages.applyEnvelope(env)
