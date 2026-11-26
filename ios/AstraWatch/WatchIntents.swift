@@ -27,9 +27,13 @@ struct AskAstraIntent: AppIntent {
         for _ in 0..<20 where session.activationState != .activated {
             try await Task.sleep(nanoseconds: 100_000_000)
         }
-        guard session.activationState == .activated,
-              session.isReachable else {
-            return .result(dialog: "iPhone 不在身边，稍后再试")
+        guard session.activationState == .activated else {
+            return .result(dialog: "WCSession 未激活，请打开 App 重试")
+        }
+        if !session.isReachable {
+            // 离线兜底：系统级必达队列，iPhone 唤醒后自动补发
+            session.transferUserInfo(["type": "send_offline", "text": text])
+            return .result(dialog: "iPhone 暂时不在线，已暂存，连上后自动发送")
         }
         let ok: Bool = await withCheckedContinuation { continuation in
             session.sendMessage(["type": "send", "text": text], replyHandler: { reply in

@@ -186,6 +186,8 @@ struct WatchHomeView: View {
             statusBanner(icon: "checkmark.circle.fill", tint: .astraAccent, text: "已发送")
         case .queued:
             statusBanner(icon: "clock.fill", tint: .astraAccent, text: "已排队，稍后自动发送")
+        case .stored:
+            statusBanner(icon: "tray.and.arrow.down.fill", tint: .astraAccent, text: "已暂存，iPhone 连上后自动发送")
         case .failed(let reason):
             statusBanner(icon: "exclamationmark.circle.fill", tint: .red, text: reason)
         }

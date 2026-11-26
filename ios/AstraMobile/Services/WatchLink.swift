@@ -220,6 +220,16 @@ extension WatchLink: WCSessionDelegate {
         }
     }
 
+    /// 手表离线暂存的补发（transferUserInfo 系统必达队列，
+    /// 手表发的时候 iPhone 可能被杀，唤醒后从这里进来）
+    nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        guard userInfo["type"] as? String == "send_offline",
+              let text = userInfo["text"] as? String else { return }
+        Task { @MainActor in
+            self.handleWatchMessage(["type": "send", "text": text])
+        }
+    }
+
     nonisolated func sessionWatchStateDidChange(_ session: WCSession) {
         Task { @MainActor in
             self.refreshDeviceState()

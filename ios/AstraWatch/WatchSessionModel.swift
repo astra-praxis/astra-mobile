@@ -11,6 +11,7 @@ final class WatchSessionModel: NSObject, ObservableObject {
         case none
         case sent          // 已发送
         case queued        // 已排队，当前任务结束后自动发送
+        case stored        // iPhone 不在线，已暂存，连接后自动发送
         case failed(String)
     }
 
@@ -44,35 +45,43 @@ final class WatchSessionModel: NSObject, ObservableObject {
         guard !body.isEmpty else { return }
         guard sessionId != nil else { return }
         let s = WCSession.default
-        guard s.activationState == .activated, s.isReachable else {
-            sendState = .failed("iPhone 不在线")
+        guard s.activationState == .activated else {
+            sendState = .failed("WCSession 未激活")
             return
         }
         // 发送语义（iPhone 侧裁决）：会话空闲 → 立即发送；运行中 → 仅排队。
         // 已发送/失败 4s 自动回落；已排队保留到本轮结束（run_state idle）
-        sendState = running ? .queued : .sent
-        scheduleSendStateReset()
-        WKInterfaceDevice.current().play(.click)
-        s.sendMessage(["type": "send", "text": body], replyHandler: { [weak self] reply in
-            Task { @MainActor in
-                let ok = reply["ok"] as? Bool ?? false
-                guard let self else { return }
-                if !ok {
-                    self.sendState = .failed("发送失败，请重试")
-                    WKInterfaceDevice.current().play(.failure)
-                } else {
-                    self.sendState = self.running ? .queued : .sent
-                    WKInterfaceDevice.current().play(.success)
+        if s.isReachable {
+            sendState = running ? .queued : .sent
+            scheduleSendStateReset()
+            WKInterfaceDevice.current().play(.click)
+            s.sendMessage(["type": "send", "text": body], replyHandler: { [weak self] reply in
+                Task { @MainActor in
+                    let ok = reply["ok"] as? Bool ?? false
+                    guard let self else { return }
+                    if !ok {
+                        self.sendState = .failed("发送失败，请重试")
+                        WKInterfaceDevice.current().play(.failure)
+                    } else {
+                        self.sendState = self.running ? .queued : .sent
+                        WKInterfaceDevice.current().play(.success)
+                    }
+                    self.scheduleSendStateReset()
                 }
-                self.scheduleSendStateReset()
-            }
-        }, errorHandler: { [weak self] _ in
-            Task { @MainActor in
-                self?.sendState = .failed("发送失败，请重试")
-                WKInterfaceDevice.current().play(.failure)
-                self?.scheduleSendStateReset()
-            }
-        })
+            }, errorHandler: { [weak self] _ in
+                Task { @MainActor in
+                    self?.sendState = .failed("发送失败，请重试")
+                    WKInterfaceDevice.current().play(.failure)
+                    self?.scheduleSendStateReset()
+                }
+            })
+        } else {
+            // iPhone 不在线（强杀/蓝牙断开）：transferUserInfo 系统级必达队列，
+            // 对端下次唤醒后补发；排队由系统管理，不占本 app 生命周期
+            s.transferUserInfo(["type": "send_offline", "text": body])
+            sendState = .stored
+            WKInterfaceDevice.current().play(.click)
+        }
     }
 
     /// 已发送/失败短暂展示后回落；已排队不动（本轮结束由 applyRunState 清）
